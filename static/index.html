@@ -516,7 +516,7 @@
             <section id="tab-verifica" class="tab-content">
                 <div class="tab-header">
                     <h2>Verifica Anomalie e Discrepanze</h2>
-                    <p>Confronto automatico tra i consumi stimati in bolletta e le autoletture fisiche per evitare sovrafatturazioni.</p>
+                    <p>Confronto automatico tra il <strong>consumo fatturato</strong> in bolletta e il <strong>consumo realmente rilevato</strong> dalle autoletture nello stesso periodo, per individuare sovrafatturazioni e conguagli attesi.</p>
                 </div>
 
                 <!-- Filtro utenza per la verifica -->
@@ -531,9 +531,10 @@
                             </select>
                         </div>
                         <div class="audit-summary-badges">
-                            <span class="badge badge-success" id="audit-badge-ok">Allineato: 0</span>
-                            <span class="badge badge-warning" id="audit-badge-warn">Stime Eccessive: 0</span>
-                            <span class="badge badge-danger" id="audit-badge-err">Conguagli Pendenti: 0</span>
+                            <span class="badge badge-success" id="audit-badge-ok">Allineate: 0</span>
+                            <span class="badge badge-danger" id="audit-badge-err">Sovrafatturate: 0</span>
+                            <span class="badge badge-warning" id="audit-badge-warn">Conguaglio atteso: 0</span>
+                            <span class="badge badge-secondary" id="audit-badge-na">Non verificabili: 0</span>
                         </div>
                     </div>
                 </div>
@@ -541,16 +542,17 @@
                 <!-- Tabella delle discrepanze -->
                 <div class="glass-card mt-4">
                     <h3>Report di Audit delle Bollette</h3>
-                    <p class="subtitle">Ogni bolletta viene confrontata con la lettura manuale dell'utente più vicina alla data di fine fatturazione.</p>
-                    
+                    <p class="subtitle">Per ogni bolletta il consumo dichiarato viene confrontato con il consumo rilevato dalle autoletture nello stesso periodo. L'abbinamento delle autoletture avviene per <strong>mese</strong>: il consumo rilevato è la differenza tra la lettura del mese di fine periodo e quella del mese precedente all'inizio.</p>
+
                     <div class="table-responsive mt-3">
                         <table class="data-table">
                             <thead>
                                 <tr>
                                     <th>Bolletta (Data)</th>
-                                    <th>Lettura Bolletta</th>
-                                    <th>Lettura Manuale (Data)</th>
-                                    <th>Discrepanza Rilevata</th>
+                                    <th>Periodo</th>
+                                    <th>Consumo Fatturato</th>
+                                    <th>Consumo Rilevato</th>
+                                    <th>Discrepanza</th>
                                     <th>Stato Rilevazione</th>
                                     <th>Stato Verifica</th>
                                     <th>Azione Suggerita</th>
@@ -565,8 +567,8 @@
 
                 <!-- Analisi Visuale Discrepanze -->
                 <div class="glass-card mt-4">
-                    <h3>Progressione Letture: Bollette vs Letture Reali</h3>
-                    <p class="subtitle">La linea rossa rappresenta il valore fatturato, la linea verde rappresenta la lettura reale. Se la linea rossa si trova molto sopra quella verde, stai pagando più del dovuto.</p>
+                    <h3>Consumo Fatturato vs Rilevato per Periodo</h3>
+                    <p class="subtitle">Per ogni bolletta verificabile: la barra rossa è il consumo fatturato, la barra verde è il consumo realmente rilevato dalle autoletture. Se la barra rossa supera la verde, stai pagando più di quanto hai consumato.</p>
                     <div class="chart-wrapper mt-3" style="height: 350px;">
                         <canvas id="chart-audit-timeline"></canvas>
                     </div>

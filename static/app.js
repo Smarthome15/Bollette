@@ -1297,199 +1297,167 @@ function renderReadingsTable() {
 }
 
 // --- TABELLA AUDIT & VERIFICA ANOMALIE ---
+// Soglia di tolleranza (in frazione): entro ±SOGLIA_AUDIT lo scostamento
+// fatturato/rilevato è considerato allineato.
+const SOGLIA_AUDIT = 0.05; // 5%
+
 function renderAuditTab() {
     if (state.activeTab !== "tab-verifica") return;
 
     const utility = document.getElementById("audit-utility-select").value;
     const bills = [...state.data.bills[utility]].sort((a,b) => a.data.localeCompare(b.data));
     const readings = [...state.data.readings[utility]].sort((a,b) => a.data.localeCompare(b.data));
-    
+
     const tbody = document.getElementById("table-audit-body");
     tbody.innerHTML = "";
 
     let countOk = 0;
-    let countWarn = 0;
-    let countErr = 0;
+    let countOver = 0; // sovrafatturate (fatturato > rilevato oltre soglia)
+    let countUnder = 0; // conguaglio atteso (fatturato < rilevato oltre soglia)
+    let countNa = 0; // non verificabili
 
     if (bills.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-secondary); padding:20px;">Nessuna bolletta registrata per questa utenza. Carica un PDF bolletta per confrontarla.</td></tr>`;
-        updateAuditCounters(0, 0, 0);
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--text-secondary); padding:20px;">Nessuna bolletta registrata per questa utenza. Carica un PDF bolletta per confrontarla.</td></tr>`;
+        updateAuditCounters(0, 0, 0, 0);
+        renderAuditTimelineChart(utility, []);
         return;
     }
 
+    const unit = unitForUtility(utility);
     const reportEntries = [];
 
-    // Per ciascuna bolletta, cerca una lettura manuale vicina alla data di fine/emissione
     bills.forEach(bill => {
-        const billVal = bill.lettura_totale !== undefined ? bill.lettura_totale : (bill.lettura || 0);
-        const billDate = new Date(bill.data);
-        
-        // Trova la lettura manuale più vicina (max ±7 giorni)
-        let closestRead = null;
-        let minDiffDays = 999;
-        
-        readings.forEach(read => {
-            const readDate = new Date(read.data);
-            const diffTime = Math.abs(readDate - billDate);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            
-            if (diffDays <= 7 && diffDays < minDiffDays) {
-                minDiffDays = diffDays;
-                closestRead = read;
-            }
-        });
+        const audit = auditConsumoForBill(bill, readings);
 
-        let comparisonText = "-";
-        let diffVal = null;
-        let statusBadge = `<span class="badge badge-secondary">Manca Lettura Reale</span>`;
-        let actionText = "Esegui lettura contatore vicino alla data della bolletta";
-        let statusClass = "secondary";
+        // Periodo (mese leggibile) e tipo lettura.
+        const periodoText = (bill.periodo_inizio || bill.periodo_fine)
+            ? `${bill.periodo_inizio ? formatDate(bill.periodo_inizio) : "?"} → ${bill.periodo_fine ? formatDate(bill.periodo_fine) : "?"}`
+            : "Non indicato";
+        const tipoLettura = bill.tipo_lettura || "rilevata";
 
-        if (closestRead) {
-            const readVal = closestRead.lettura_totale !== undefined ? closestRead.lettura_totale : (closestRead.lettura || 0);
-            comparisonText = `${readVal} (${formatDate(closestRead.data)})`;
-            diffVal = billVal - readVal;
-            
-            // Logica di valutazione discrepanza
-            if (bill.tipo_lettura === "stimata") {
-                if (diffVal > 10) {
-                    statusBadge = `<span class="badge badge-warning">Stima Eccessiva</span>`;
-                    actionText = `Contesta bolletta: addebitati +${diffVal} unità stimati oltre il valore reale. Invia autolettura!`;
-                    countWarn++;
-                    statusClass = "warning";
-                } else if (diffVal < -10) {
-                    statusBadge = `<span class="badge badge-danger">Conguaglio Pendente</span>`;
-                    actionText = `Attenzione: stima sottodimensionata di ${Math.abs(diffVal)} unità. Il conguaglio futuro sarà elevato.`;
-                    countErr++;
-                    statusClass = "danger";
-                } else {
-                    statusBadge = `<span class="badge badge-success">Stima Corretta</span>`;
-                    actionText = "La stima è in linea con le tue letture. Nessuna azione necessaria.";
-                    countOk++;
-                    statusClass = "success";
-                }
+        let fatturatoText = audit.consumoFatturato != null ? `${audit.consumoFatturato} ${unit}` : "-";
+        let rilevatoText = "-";
+        let diffDisplay = "-";
+        let statusBadge;
+        let actionText;
+        let statusClass;
+
+        if (!audit.verifiable) {
+            rilevatoText = "n/d";
+            statusBadge = `<span class="badge badge-secondary">Non verificabile</span>`;
+            actionText = audit.reason || "Dati insufficienti per la verifica.";
+            statusClass = "secondary";
+            countNa++;
+        } else {
+            rilevatoText = `${audit.consumoRilevato} ${unit}`;
+            const pct = Math.round(audit.deltaPct * 100);
+            const segno = audit.delta > 0 ? "+" : "";
+            diffDisplay = `${segno}${audit.delta} ${unit} (${segno}${pct}%)`;
+
+            if (Math.abs(audit.deltaPct) <= SOGLIA_AUDIT) {
+                statusBadge = `<span class="badge badge-success">Allineata</span>`;
+                actionText = "Il consumo fatturato corrisponde a quello rilevato. Nessuna azione necessaria.";
+                statusClass = "success";
+                countOk++;
+            } else if (audit.delta > 0) {
+                statusBadge = `<span class="badge badge-danger">Sovrafatturata</span>`;
+                actionText = `Fatturati +${audit.delta} ${unit} (${pct}%) oltre il consumo reale rilevato. Verifica la bolletta e invia un'autolettura.`;
+                statusClass = "danger";
+                countOver++;
             } else {
-                // Rilevata o mista
-                if (Math.abs(diffVal) <= 15) {
-                    statusBadge = `<span class="badge badge-success">Corrisponde</span>`;
-                    actionText = "I valori corrispondono. La fatturazione è corretta.";
-                    countOk++;
-                    statusClass = "success";
-                } else if (diffVal > 15) {
-                    statusBadge = `<span class="badge badge-danger">Discrepanza Positiva</span>`;
-                    actionText = `Anomalia: la bolletta riporta +${diffVal} unità in più rispetto alla tua lettura fisica del contatore. Richiedi verifica.`;
-                    countErr++;
-                    statusClass = "danger";
-                } else {
-                    statusBadge = `<span class="badge badge-warning">Discrepanza Negativa</span>`;
-                    actionText = `Consumo reale superiore di ${Math.abs(diffVal)} unità rispetto a quanto fatturato. Possibile conguaglio futuro.`;
-                    countWarn++;
-                    statusClass = "warning";
-                }
+                statusBadge = `<span class="badge badge-warning">Conguaglio atteso</span>`;
+                actionText = `Consumo reale superiore di ${Math.abs(audit.delta)} ${unit} (${Math.abs(pct)}%) rispetto al fatturato. Possibile conguaglio futuro.`;
+                statusClass = "warning";
+                countUnder++;
             }
         }
 
-        const unit = utility === "LUCE" ? "kWh" : utility === "GAS" ? "SMC" : "m³";
-        const diffDisplay = diffVal !== null ? `${diffVal > 0 ? '+' : ''}${diffVal} ${unit}` : "-";
-
         reportEntries.push({
             date: bill.data,
-            billVal: `${billVal} ${unit}`,
-            comparisonText,
+            periodoText,
+            fatturatoText,
+            rilevatoText,
             diffDisplay,
-            tipo_lettura: bill.tipo_lettura || "rilevata",
+            tipoLettura,
             statusBadge,
             actionText,
             statusClass
         });
     });
 
-    // Mostra in ordine decrescente di data
+    // Mostra in ordine decrescente di data.
     reportEntries.sort((a,b) => b.date.localeCompare(a.date));
 
     reportEntries.forEach(entry => {
         const tr = document.createElement("tr");
         tr.innerHTML = `
             <td>${formatDate(entry.date)}</td>
-            <td class="font-medium">${entry.billVal}</td>
-            <td>${entry.comparisonText}</td>
+            <td style="font-size:0.85rem;">${entry.periodoText}</td>
+            <td class="font-medium">${entry.fatturatoText}</td>
+            <td>${entry.rilevatoText}</td>
             <td class="text-${entry.statusClass} font-medium">${entry.diffDisplay}</td>
-            <td><span class="badge text-capitalize">${entry.tipo_lettura}</span></td>
+            <td><span class="badge text-capitalize">${entry.tipoLettura}</span></td>
             <td>${entry.statusBadge}</td>
             <td style="font-size:0.85rem;" class="text-secondary">${entry.actionText}</td>
         `;
         tbody.appendChild(tr);
     });
 
-    updateAuditCounters(countOk, countWarn, countErr);
+    updateAuditCounters(countOk, countOver, countUnder, countNa);
 
-    // Disegna la timeline temporale di allineamento
-    renderAuditTimelineChart(utility, bills, readings);
+    // Disegna il confronto consumo fatturato vs rilevato per periodo.
+    renderAuditTimelineChart(utility, reportEntries.length ? bills : [], readings);
 }
 
-function updateAuditCounters(ok, warn, err) {
-    document.getElementById("audit-badge-ok").textContent = `Allineato: ${ok}`;
-    document.getElementById("audit-badge-warn").textContent = `Stime Eccessive: ${warn}`;
-    document.getElementById("audit-badge-err").textContent = `Anomalie/Conguagli: ${err}`;
+function updateAuditCounters(ok, over, under, na) {
+    document.getElementById("audit-badge-ok").textContent = `Allineate: ${ok}`;
+    document.getElementById("audit-badge-err").textContent = `Sovrafatturate: ${over}`;
+    document.getElementById("audit-badge-warn").textContent = `Conguaglio atteso: ${under}`;
+    document.getElementById("audit-badge-na").textContent = `Non verificabili: ${na}`;
 }
 
-// TIMELINE GRAFICO DI CONFRONTO DIRETTO LETTURE
+// GRAFICO DI CONFRONTO: consumo FATTURATO vs RILEVATO per periodo.
+// Una coppia di barre (rossa = fatturato, verde = rilevato) per ogni bolletta verificabile.
 function renderAuditTimelineChart(utility, bills, readings) {
     const ctx = document.getElementById("chart-audit-timeline").getContext("2d");
     if (state.charts.audit) state.charts.audit.destroy();
 
-    // Filtra e mappa i dati per anno solare corrente e precedente
-    const currentYearVal = new Date().getFullYear();
-    const filterYear = (item) => new Date(item.data).getFullYear() >= currentYearVal - 1;
-    
-    const billsFiltered = bills.filter(filterYear);
-    const readingsFiltered = readings.filter(filterYear);
+    const unit = unitForUtility(utility);
+    const sortedReadings = (readings || []).slice().sort((a,b) => a.data.localeCompare(b.data));
 
-    // Raccogli tutte le date uniche e ordinale per l'asse X
-    const allDates = Array.from(new Set([
-        ...billsFiltered.map(b => b.data),
-        ...readingsFiltered.map(r => r.data)
-    ])).sort();
+    // Considera solo le bollette verificabili, ordinate cronologicamente.
+    const verificabili = (bills || [])
+        .slice()
+        .sort((a,b) => a.data.localeCompare(b.data))
+        .map(b => ({ bill: b, audit: auditConsumoForBill(b, sortedReadings) }))
+        .filter(x => x.audit.verifiable);
 
-    const unit = utility === "LUCE" ? "kWh" : utility === "GAS" ? "SMC" : "m³";
-
-    // Costruisci le serie di dati (se il dato non c'è su quella data, Chart.js supporta spanGaps: true)
-    const datasetBills = allDates.map(d => {
-        const b = billsFiltered.find(x => x.data === d);
-        if (!b) return null;
-        return b.lettura_totale !== undefined ? b.lettura_totale : (b.lettura || 0);
+    const labels = verificabili.map(x => {
+        // Etichetta = periodo "mese fine" se disponibile, altrimenti data bolletta.
+        const fine = x.bill.periodo_fine || x.bill.data;
+        return formatDate(fine);
     });
-
-    const datasetReadings = allDates.map(d => {
-        const r = readingsFiltered.find(x => x.data === d);
-        if (!r) return null;
-        return r.lettura_totale !== undefined ? r.lettura_totale : (r.lettura || 0);
-    });
+    const datasetFatturato = verificabili.map(x => x.audit.consumoFatturato);
+    const datasetRilevato = verificabili.map(x => x.audit.consumoRilevato);
 
     state.charts.audit = new Chart(ctx, {
-        type: "line",
+        type: "bar",
         data: {
-            labels: allDates.map(formatDate),
+            labels: labels,
             datasets: [
                 {
-                    label: `Letture in Bolletta (${unit})`,
-                    data: datasetBills,
+                    label: `Consumo Fatturato (${unit})`,
+                    data: datasetFatturato,
+                    backgroundColor: "rgba(239, 68, 68, 0.65)",
                     borderColor: "#ef4444",
-                    backgroundColor: "rgba(239, 68, 68, 0.1)",
-                    borderWidth: 2,
-                    pointRadius: 4,
-                    spanGaps: true,
-                    tension: 0.15
+                    borderWidth: 1
                 },
                 {
-                    label: `Autoletture Reali (${unit})`,
-                    data: datasetReadings,
+                    label: `Consumo Rilevato (${unit})`,
+                    data: datasetRilevato,
+                    backgroundColor: "rgba(16, 185, 129, 0.65)",
                     borderColor: "#10b981",
-                    backgroundColor: "rgba(16, 185, 129, 0.1)",
-                    borderWidth: 2,
-                    pointRadius: 4,
-                    spanGaps: true,
-                    tension: 0.15
+                    borderWidth: 1
                 }
             ]
         },
@@ -1502,7 +1470,7 @@ function renderAuditTimelineChart(utility, bills, readings) {
             },
             scales: {
                 x: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
-                y: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } }
+                y: { beginAtZero: true, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } }
             },
             plugins: {
                 legend: { labels: { color: "#f8fafc" } }
@@ -1589,6 +1557,166 @@ function currentYear() {
 
 function unitForUtility(utility) {
     return utility === "LUCE" ? "kWh" : utility === "GAS" ? "SMC" : "m³";
+}
+
+// --- AUDIT CONSUMI: confronto consumo FATTURATO vs RILEVATO ---
+// (consumo rilevato calcolato per differenza tra autoletture progressive del contatore).
+// Funzioni pure: nessun accesso al DOM, nessuno stato globale.
+
+// Estrazione robusta del valore progressivo del contatore da un record.
+// LUCE usa `lettura_totale`; GAS/ACQUA usano `lettura`. Difensivo su null/undefined/NaN.
+function readingValue(rec) {
+    if (!rec || typeof rec !== "object") return 0;
+    // Preferisci lettura_totale (LUCE) se è un numero valido.
+    if (typeof rec.lettura_totale === "number" && isFinite(rec.lettura_totale)) {
+        return rec.lettura_totale;
+    }
+    // Altrimenti lettura (GAS/ACQUA).
+    if (typeof rec.lettura === "number" && isFinite(rec.lettura)) {
+        return rec.lettura;
+    }
+    return 0;
+}
+
+// Converte 'YYYY-MM-DD' nella chiave mese 'YYYY-MM'. Null-safe.
+function monthKey(dateStr) {
+    if (typeof dateStr !== "string" || dateStr.length < 7) return null;
+    const ym = dateStr.slice(0, 7);
+    // Validazione minima del formato 'YYYY-MM'.
+    if (!/^\d{4}-\d{2}$/.test(ym)) return null;
+    return ym;
+}
+
+// Restituisce il mese precedente a 'YYYY-MM' (gestisce il confine d'anno: 2026-01 -> 2025-12).
+function prevMonthKey(ym) {
+    if (typeof ym !== "string" || !/^\d{4}-\d{2}$/.test(ym)) return null;
+    let anno = parseInt(ym.slice(0, 4), 10);
+    let mese = parseInt(ym.slice(5, 7), 10); // 1..12
+    mese -= 1;
+    if (mese < 1) {
+        // Da gennaio si torna a dicembre dell'anno precedente.
+        mese = 12;
+        anno -= 1;
+    }
+    const meseStr = (mese < 10 ? "0" : "") + mese;
+    return anno + "-" + meseStr;
+}
+
+// Trova l'autolettura "utile" per un mese target:
+// l'ULTIMA (data più recente) tra quelle il cui mese è <= targetYm.
+// 'sortedReadings' è già ordinato crescente per data, quindi scorriamo dal fondo:
+// il primo record con mese <= targetYm è il più recente che soddisfa il vincolo.
+// Gestisce mese mancante (usa la più recente precedente) e mesi duplicati
+// (l'ultima del mese vince). Il confronto lessicografico tra stringhe 'YYYY-MM'
+// zero-padded coincide con l'ordine cronologico, anche a cavallo d'anno.
+function readingForMonth(sortedReadings, targetYm) {
+    if (!Array.isArray(sortedReadings) || sortedReadings.length === 0) return null;
+    if (typeof targetYm !== "string" || !/^\d{4}-\d{2}$/.test(targetYm)) return null;
+    for (let i = sortedReadings.length - 1; i >= 0; i--) {
+        const rec = sortedReadings[i];
+        const rym = monthKey(rec && rec.data);
+        if (rym === null) continue; // record con data malformata: ignora
+        if (rym <= targetYm) {
+            return rec;
+        }
+    }
+    return null;
+}
+
+// Audit del consumo di una singola bolletta: confronta il consumo fatturato con
+// quello rilevato dalle autoletture, ragionando per MESE (non per giorno).
+// 'bill': record bolletta; 'sortedReadings': autoletture (asc per data).
+function auditConsumoForBill(bill, sortedReadings) {
+    // Risultato di default: non verificabile finché non dimostriamo il contrario.
+    const result = {
+        verifiable: false,
+        reason: null,
+        consumoFatturato: null,
+        consumoRilevato: null,
+        delta: null,
+        deltaPct: null,
+        startMonth: null,
+        endMonth: null,
+        letturaInizio: null,
+        letturaFine: null
+    };
+
+    if (!bill || typeof bill !== "object") {
+        result.reason = "Bolletta non valida.";
+        return result;
+    }
+
+    // La bolletta deve avere un periodo completo (inizio e fine).
+    const pInizio = monthKey(bill.periodo_inizio);
+    const pFine = monthKey(bill.periodo_fine);
+
+    if (pInizio === null) {
+        result.reason = "Manca il periodo di inizio in bolletta.";
+        return result;
+    }
+    if (pFine === null) {
+        result.reason = "Manca il periodo di fine in bolletta.";
+        return result;
+    }
+
+    // consumo_fatturato deve essere un numero valido.
+    if (typeof bill.consumo_fatturato !== "number" || !isFinite(bill.consumo_fatturato)) {
+        result.reason = "Consumo fatturato non indicato in bolletta.";
+        return result;
+    }
+    result.consumoFatturato = bill.consumo_fatturato;
+
+    // endMonth   = mese di periodo_fine.
+    // startMonth = mese IMMEDIATAMENTE PRECEDENTE al mese di periodo_inizio
+    //              (la lettura di base è quella presa prima dell'inizio del periodo).
+    const endMonth = pFine;
+    const startMonth = prevMonthKey(pInizio);
+    result.endMonth = endMonth;
+    result.startMonth = startMonth;
+
+    if (startMonth === null) {
+        result.reason = "Impossibile determinare il mese di riferimento iniziale.";
+        return result;
+    }
+
+    // letturaInizio = autolettura del mese di base (o la più recente <= startMonth).
+    // letturaFine   = autolettura del mese di fine (o la più recente <= endMonth).
+    const recInizio = readingForMonth(sortedReadings, startMonth);
+    const recFine = readingForMonth(sortedReadings, endMonth);
+
+    if (!recInizio) {
+        result.reason = "Manca un'autolettura per il mese di riferimento iniziale (" + startMonth + ") o precedenti.";
+        return result;
+    }
+    if (!recFine) {
+        result.reason = "Manca un'autolettura per il mese di fine periodo (" + endMonth + ") o precedenti.";
+        return result;
+    }
+
+    const valInizio = readingValue(recInizio);
+    const valFine = readingValue(recFine);
+    result.letturaInizio = valInizio;
+    result.letturaFine = valFine;
+
+    // Consumo rilevato = differenza tra le due letture progressive.
+    const consumoRilevato = valFine - valInizio;
+
+    // Un consumo <= 0 indica un azzeramento del contatore o dati incoerenti:
+    // non lo consideriamo verificabile e non inventiamo un valore.
+    if (consumoRilevato <= 0) {
+        result.reason = "Consumo rilevato non valido (≤ 0): possibile azzeramento del contatore o letture incoerenti.";
+        return result;
+    }
+    result.consumoRilevato = consumoRilevato;
+
+    // delta    = fatturato - rilevato (positivo = fatturato più alto del rilevato).
+    // deltaPct = delta / rilevato (frazione: 0.07 = +7%).
+    result.delta = result.consumoFatturato - consumoRilevato;
+    result.deltaPct = consumoRilevato !== 0 ? (result.delta / consumoRilevato) : null;
+
+    result.verifiable = true;
+    result.reason = null;
+    return result;
 }
 
 // --- FUNZIONI CONTROLLO SINCRONIZZAZIONE NAS ---
