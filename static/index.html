@@ -307,9 +307,27 @@
 
                                 <div class="form-row">
                                     <div class="form-group col-6">
+                                        <label for="bill-periodo-inizio">Periodo fatturazione: inizio</label>
+                                        <input type="date" id="bill-periodo-inizio">
+                                    </div>
+                                    <div class="form-group col-6">
+                                        <label for="bill-periodo-fine">Periodo fatturazione: fine</label>
+                                        <input type="date" id="bill-periodo-fine">
+                                    </div>
+                                </div>
+
+                                <div class="form-row">
+                                    <div class="form-group col-6">
                                         <label for="bill-amount">Importo Fattura (€)</label>
                                         <input type="number" id="bill-amount" step="0.01" min="0" placeholder="0.00" required>
                                     </div>
+                                    <div class="form-group col-6">
+                                        <label for="bill-consumo-fatturato">Consumo fatturato (kWh / Smc / m³)</label>
+                                        <input type="number" id="bill-consumo-fatturato" step="0.01" min="0" placeholder="Consumo del periodo da bolletta">
+                                    </div>
+                                </div>
+
+                                <div class="form-row">
                                     <div class="form-group col-6">
                                         <label for="bill-type">Tipo di Lettura</label>
                                         <select id="bill-type">

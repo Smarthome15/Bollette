@@ -140,6 +140,9 @@ def get_json_filepath(username: str, utility: str, is_manual: bool):
 def parse_pdf_heuristics(text: str, utility_type: str):
     result = {
         "data": None,
+        "periodo_inizio": None,
+        "periodo_fine": None,
+        "consumo_fatturato": None,
         "fattura": None,
         "lettura_totale": None,
         "lettura": None,
@@ -147,7 +150,7 @@ def parse_pdf_heuristics(text: str, utility_type: str):
         "lettura_f2": 0,
         "lettura_f3": 0
     }
-    
+
     # 1. Ricerca date (DD/MM/YYYY o DD-MM-YYYY)
     date_matches = re.findall(r'\b(\d{2})[/-](\d{2})[/-](\d{4})\b', text)
     dates = []
@@ -162,6 +165,11 @@ def parse_pdf_heuristics(text: str, utility_type: str):
         dates.sort()
         # Spesso l'ultima data nel testo corrisponde alla fine periodo o scadenza bolletta
         result["data"] = dates[-1]
+        # Euristica grezza del periodo di fatturazione: prima e ultima data trovate.
+        # Indicativa, va sempre verificata a mano (la stima affidabile la fa Gemini).
+        if len(dates) >= 2:
+            result["periodo_inizio"] = dates[0]
+            result["periodo_fine"] = dates[-1]
         
     # 2. Ricerca Importo (es: 120,40 € o € 120,40 o Totale 120,40)
     clean_text = re.sub(r'\s+', ' ', text)
@@ -209,6 +217,9 @@ def parse_pdf_gemini(text: str, utility_type: str):
         Se un dato non è presente, metti null.
         Campi richiesti:
         - data: la data di fine periodo o di emissione della bolletta (in formato YYYY-MM-DD).
+        - periodo_inizio: la data di INIZIO del periodo di fatturazione/consumo indicato in bolletta (formato YYYY-MM-DD, null se assente).
+        - periodo_fine: la data di FINE del periodo di fatturazione/consumo indicato in bolletta (formato YYYY-MM-DD, null se assente).
+        - consumo_fatturato: il consumo del periodo DICHIARATO nella bolletta (numero, nell'unità dell'utenza: kWh per la luce, Smc per il gas, m³ per l'acqua). È il consumo del periodo, NON la lettura del contatore. Metti null se non indicato.
         - fattura: l'importo totale da pagare in Euro (numero decimale). Se non c'è importo o è solo una comunicazione, metti null.
         """
         if utility_type.upper() == "LUCE":

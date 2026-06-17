@@ -684,8 +684,11 @@ async function handlePdfSelected(file) {
 
 function prefillBillForm(data) {
     if (data.data) document.getElementById("bill-date").value = data.data;
+    if (data.periodo_inizio) document.getElementById("bill-periodo-inizio").value = data.periodo_inizio;
+    if (data.periodo_fine) document.getElementById("bill-periodo-fine").value = data.periodo_fine;
+    if (data.consumo_fatturato != null) document.getElementById("bill-consumo-fatturato").value = data.consumo_fatturato;
     if (data.fattura) document.getElementById("bill-amount").value = data.fattura;
-    
+
     const utility = document.getElementById("bill-utility").value;
     if (utility === "LUCE") {
         document.getElementById("bill-f1").value = data.lettura_f1 || 0;
@@ -744,9 +747,17 @@ async function saveNewBill(e) {
         }
     }
 
+    const periodoInizio = document.getElementById("bill-periodo-inizio").value || null;
+    const periodoFine = document.getElementById("bill-periodo-fine").value || null;
+    const consumoFatturatoRaw = document.getElementById("bill-consumo-fatturato").value;
+    const consumoFatturato = consumoFatturatoRaw !== "" ? parseFloat(consumoFatturatoRaw) : null;
+
     // Costruisci record
     const record = {
         data: date,
+        periodo_inizio: periodoInizio,
+        periodo_fine: periodoFine,
+        consumo_fatturato: consumoFatturato,
         fattura: amount,
         pdf_path: pdfPath,
         tipo_lettura: billType, // Stimata, Rilevata, Mista
@@ -1196,9 +1207,18 @@ function openPdfModal(url, title, bill) {
         `;
     }
 
+    const periodoText = (bill.periodo_inizio || bill.periodo_fine)
+        ? `${bill.periodo_inizio ? formatDate(bill.periodo_inizio) : "?"} → ${bill.periodo_fine ? formatDate(bill.periodo_fine) : "?"}`
+        : "Non indicato";
+    const consumoFattText = (bill.consumo_fatturato != null)
+        ? `${bill.consumo_fatturato} ${unitForUtility(bill.utility)}`
+        : "Non indicato";
+
     detailsBox.innerHTML = `
         <div class="details-row"><span class="details-label">Utenza</span><span class="details-val badge badge-secondary">${bill.utility}</span></div>
         <div class="details-row"><span class="details-label">Data Bolletta</span><span class="details-val">${formatDate(bill.data)}</span></div>
+        <div class="details-row"><span class="details-label">Periodo Fatturazione</span><span class="details-val">${periodoText}</span></div>
+        <div class="details-row"><span class="details-label">Consumo Fatturato</span><span class="details-val">${consumoFattText}</span></div>
         <div class="details-row"><span class="details-label">Importo Fatturato</span><span class="details-val text-primary" style="font-size:1.15rem; font-weight:700;">€ ${(bill.fattura || 0).toFixed(2)}</span></div>
         <div class="details-row"><span class="details-label">Lettura Totale</span><span class="details-val">${reading}</span></div>
         ${specificContent}
@@ -1565,6 +1585,10 @@ function formatDate(dateStr) {
 
 function currentYear() {
     return new Date().getFullYear();
+}
+
+function unitForUtility(utility) {
+    return utility === "LUCE" ? "kWh" : utility === "GAS" ? "SMC" : "m³";
 }
 
 // --- FUNZIONI CONTROLLO SINCRONIZZAZIONE NAS ---
