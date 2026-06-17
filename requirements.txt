@@ -1,0 +1,8 @@
+# Dipendenze del backend "Gestione Bollette e Letture"
+# Installazione:  pip install -r requirements.txt
+
+uvicorn>=0.30          # server ASGI che esegue l'app
+starlette>=0.40        # framework web (routing, static, CORS)
+python-multipart>=0.0.10  # parsing dei form/upload (request.form())
+pdfplumber>=0.10       # estrazione del testo dalle bollette PDF
+google-genai>=0.3      # SDK Gemini (gemini-2.5-flash) per il parsing IA delle bollette

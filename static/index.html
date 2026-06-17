@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestione Consumi & Bollette Casa</title>
+    <!-- Google Fonts: Outfit per i titoli, Inter per il testo -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Chart.js per i grafici -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Lucide Icons per icone moderne -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- CSS Custom -->
+    <link rel="stylesheet" href="app.css">
+</head>
+<body>
+    <!-- Sfondo dinamico con gradienti sfumati -->
+    <div class="glass-background"></div>
+
+    <div class="app-container">
+        <!-- Barra Laterale / Barra Superiore (Sidebar/Navbar) -->
+        <header class="sidebar">
+            <div class="brand">
+                <i data-lucide="activity" class="brand-icon"></i>
+                <div class="brand-text">
+                    <h1>ConsumiCasa</h1>
+                    <span>Gestione & Audit Utenze</span>
+                </div>
+            </div>
+
+            <!-- Selezione Utente Rapida -->
+            <div class="user-status-card">
+                <div class="user-info">
+                    <span class="user-label">Utente Attivo</span>
+                    <span id="current-user-display" class="user-name">Caricamento...</span>
+                </div>
+                <button id="btn-logout" class="btn-icon-only" title="Sconnetti/Cambia Utente">
+                    <i data-lucide="log-out"></i>
+                </button>
+            </div>
+
+            <!-- Navigazione Principale -->
+            <nav class="nav-menu">
+                <button class="nav-btn active" data-tab="tab-dashboard">
+                    <i data-lucide="layout-dashboard"></i>
+                    <span>Dashboard</span>
+                </button>
+                <button class="nav-btn" data-tab="tab-bollette">
+                    <i data-lucide="file-text"></i>
+                    <span>Bollette PDF</span>
+                </button>
+                <button class="nav-btn" data-tab="tab-letture">
+                    <i data-lucide="gauge"></i>
+                    <span>Letture Manuali</span>
+                </button>
+                <button class="nav-btn" data-tab="tab-verifica">
+                    <i data-lucide="shield-alert"></i>
+                    <span>Verifica Anomalie</span>
+                </button>
+                <button class="nav-btn" data-tab="tab-settings">
+                    <i data-lucide="settings"></i>
+                    <span>Impostazioni</span>
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="connection-status" id="backend-status">
+                    <span class="status-dot offline"></span>
+                    <span class="status-text">Backend Offline</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Contenuto Principale -->
+        <main class="content-area">
+            
+            <!-- SCHEDA LOGIN / BLOCCO ACCESSO -->
+            <section id="login-overlay" class="login-panel">
+                <div class="glass-card login-card">
+                    <i data-lucide="lock" class="login-icon"></i>
+                    <h2>Accedi ai Consumi</h2>
+                    <p class="subtitle">Seleziona il tuo profilo ed inserisci la password</p>
+                    
+                    <form id="login-form">
+                        <div class="form-group">
+                            <label for="login-username">Profilo Utente</label>
+                            <select id="login-username" required>
+                                <option value="Matteo">Matteo (Admin - UserA)</option>
+                                <option value="Dario">Dario (User - UserB)</option>
+                                <option value="Test">Test (UserC)</option>
+                                <option value="Test_2">Test 2 (UserD)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="login-password">Password</label>
+                            <input type="password" id="login-password" placeholder="Inserisci password..." required>
+                        </div>
+                        <div class="error-message" id="login-error"></div>
+                        <button type="submit" class="btn-primary w-full">
+                            <span>Accedi</span>
+                            <i data-lucide="chevron-right"></i>
+                        </button>
+                    </form>
+                </div>
+            </section>
+
+            <!-- SCHEDA CONFLITTO DI SINCRONIZZAZIONE (NAS vs PC) -->
+            <section id="sync-overlay" class="login-panel hidden">
+                <div class="glass-card" style="max-width: 800px; width: 100%; padding: 32px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <i data-lucide="refresh-cw" class="login-icon" style="color: var(--color-warning);"></i>
+                        <h2>Rilevata Discrepanza PC/NAS</h2>
+                        <p class="subtitle" style="margin-top: 8px;">I database salvati sul tuo computer locale non corrispondono a quelli presenti sul NAS di Home Assistant. Scegli come procedere per allinearli:</p>
+                    </div>
+                    
+                    <div class="table-responsive" style="max-height: 350px; border: 1px solid var(--border-glass); border-radius: var(--radius-md); background: rgba(0,0,0,0.15);">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Utenza / File</th>
+                                    <th>Modifica PC (Locale)</th>
+                                    <th>Modifica NAS (Remoto)</th>
+                                    <th>Stato</th>
+                                    <th>Risoluzione</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sync-conflict-tbody">
+                                <!-- Popolato da JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="form-row mt-4" style="gap: 16px;">
+                        <button id="btn-sync-download-all" class="btn-secondary col-6">
+                            <i data-lucide="download-cloud"></i>
+                            <span>Scarica Tutto dal NAS</span>
+                        </button>
+                        <button id="btn-sync-upload-all" class="btn-primary col-6">
+                            <i data-lucide="upload-cloud"></i>
+                            <span>Invia Tutto al NAS</span>
+                        </button>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 20px;">
+                        <button id="btn-sync-skip" class="btn-secondary btn-sm" style="background: none; border: none; text-decoration: underline; cursor: pointer; color: var(--text-secondary);">
+                            Salta e vai alla Dashboard (Senza allineare)
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= TAB: DASHBOARD ================= -->
+            <section id="tab-dashboard" class="tab-content active">
+                <div class="tab-header">
+                    <h2>Panoramica Consumi & Spese</h2>
+                    <p>Sintesi dei costi storici, consumi e ultime rilevazioni.</p>
+                </div>
+
+                <!-- Schede KPI -->
+                <div class="kpi-grid">
+                    <div class="glass-card kpi-card total">
+                        <div class="kpi-icon-wrapper">
+                            <i data-lucide="credit-card"></i>
+                        </div>
+                        <div class="kpi-info">
+                            <span class="kpi-title">Spesa Totale Anno</span>
+                            <span class="kpi-value" id="kpi-spesa-totale">€ 0.00</span>
+                            <span class="kpi-trend" id="kpi-spesa-trend">N/A</span>
+                        </div>
+                    </div>
+                    <div class="glass-card kpi-card luce">
+                        <div class="kpi-icon-wrapper">
+                            <i data-lucide="zap"></i>
+                        </div>
+                        <div class="kpi-info">
+                            <span class="kpi-title">Energia Elettrica (Ultimo)</span>
+                            <span class="kpi-value" id="kpi-spesa-luce">€ 0.00</span>
+                            <span class="kpi-sub" id="kpi-consumo-luce">0 kWh</span>
+                        </div>
+                    </div>
+                    <div class="glass-card kpi-card gas">
+                        <div class="kpi-icon-wrapper">
+                            <i data-lucide="flame"></i>
+                        </div>
+                        <div class="kpi-info">
+                            <span class="kpi-title">Gas Naturale (Ultimo)</span>
+                            <span class="kpi-value" id="kpi-spesa-gas">€ 0.00</span>
+                            <span class="kpi-sub" id="kpi-consumo-gas">0 SMC</span>
+                        </div>
+                    </div>
+                    <div class="glass-card kpi-card acqua">
+                        <div class="kpi-icon-wrapper">
+                            <i data-lucide="droplet"></i>
+                        </div>
+                        <div class="kpi-info">
+                            <span class="kpi-title">Servizio Idrico (Ultimo)</span>
+                            <span class="kpi-value" id="kpi-spesa-acqua">€ 0.00</span>
+                            <span class="kpi-sub" id="kpi-consumo-acqua">0 m³</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Grafici Dashboard -->
+                <div class="charts-grid">
+                    <div class="glass-card chart-container">
+                        <h3>Andamento delle Spese Mensili (€)</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="chart-spese"></canvas>
+                        </div>
+                    </div>
+                    <div class="glass-card chart-container">
+                        <h3>Consumo Storico Annuale Rilevato</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="chart-consumi"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Storico Rapido / Ultime attività -->
+                <div class="glass-card recent-activity">
+                    <div class="card-header">
+                        <h3>Ultime Operazioni Registrate</h3>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Data</th>
+                                    <th>Utenza</th>
+                                    <th>Tipo Dato</th>
+                                    <th>Valore/Importo</th>
+                                    <th>Consumo Periodo</th>
+                                    <th>Lettura Contatore</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-activities-table">
+                                <!-- Righe inserite dinamicamente -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= TAB: BOLLETTE ================= -->
+            <section id="tab-bollette" class="tab-content">
+                <div class="tab-header-actions">
+                    <div class="tab-header">
+                        <h2>Archivio Bollette PDF</h2>
+                        <p>Gestisci, visualizza ed inserisci le fatture dei tuoi fornitori.</p>
+                    </div>
+                    <button class="btn-primary" id="btn-nuova-bolletta">
+                        <i data-lucide="plus"></i>
+                        <span>Aggiungi Bolletta</span>
+                    </button>
+                </div>
+
+                <!-- CONTENITORE SIDE-BY-SIDE INSERIMENTO BOLLETTE (Nascosto di default) -->
+                <div id="panel-inserimento-bolletta" class="glass-card slide-panel hidden">
+                    <div class="panel-header">
+                        <h3>Registrazione Nuova Bolletta</h3>
+                        <button class="btn-close" id="btn-chiudi-inserimento">
+                            <i data-lucide="x"></i>
+                        </button>
+                    </div>
+                    <div class="split-view">
+                        <!-- Sinistra: PDF Preview / Drag and drop -->
+                        <div class="pdf-section">
+                            <div class="drag-drop-area" id="pdf-drag-drop">
+                                <i data-lucide="file-up" class="upload-icon"></i>
+                                <h4>Trascina qui la bolletta in PDF</h4>
+                                <p>Oppure clicca per selezionare il file dal dispositivo</p>
+                                <input type="file" id="pdf-file-input" accept="application/pdf" class="hidden">
+                                <span class="badge badge-info hidden" id="uploading-badge">Caricamento e analisi in corso...</span>
+                            </div>
+                            <div class="pdf-preview-container hidden" id="pdf-preview-box">
+                                <iframe id="pdf-preview-frame" src="" type="application/pdf"></iframe>
+                                <button class="btn-secondary btn-sm" id="btn-rimuovi-pdf">Rimuovi PDF</button>
+                            </div>
+                        </div>
+
+                        <!-- Destra: Form di compilazione -->
+                        <div class="form-section">
+                            <div id="ai-status-banner" class="ai-banner hidden">
+                                <i data-lucide="sparkles"></i>
+                                <span id="ai-status-text">Analisi IA completata! Verifica i dati precompilati.</span>
+                            </div>
+                            
+                            <form id="form-bolletta">
+                                <input type="hidden" id="form-bill-pdf-path">
+                                
+                                <div class="form-row">
+                                    <div class="form-group col-6">
+                                        <label for="bill-utility">Utenza</label>
+                                        <select id="bill-utility" required>
+                                            <option value="LUCE">💡 Luce (Energia)</option>
+                                            <option value="GAS">🔥 Gas Naturale</option>
+                                            <option value="ACQUA">💧 Acqua (Idrico)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group col-6">
+                                        <label for="bill-date">Data Bolletta / Scadenza</label>
+                                        <input type="date" id="bill-date" required>
+                                    </div>
+                                </div>
+
+                                <div class="form-row">
+                                    <div class="form-group col-6">
+                                        <label for="bill-amount">Importo Fattura (€)</label>
+                                        <input type="number" id="bill-amount" step="0.01" min="0" placeholder="0.00" required>
+                                    </div>
+                                    <div class="form-group col-6">
+                                        <label for="bill-type">Tipo di Lettura</label>
+                                        <select id="bill-type">
+                                            <option value="rilevata">Rilevata (Reale)</option>
+                                            <option value="stimata">Stimata</option>
+                                            <option value="mista">Mista / Acconto</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <!-- Campi specifici LUCE (Fasce F1/F2/F3 + Totale) -->
+                                <div id="fields-luce" class="utility-specific-fields">
+                                    <h4 class="section-divider">Letture Contatore Luce (kWh)</h4>
+                                    <div class="form-row">
+                                        <div class="form-group col-3">
+                                            <label for="bill-f1">Fascia F1</label>
+                                            <input type="number" id="bill-f1" min="0" value="0">
+                                        </div>
+                                        <div class="form-group col-3">
+                                            <label for="bill-f2">Fascia F2</label>
+                                            <input type="number" id="bill-f2" min="0" value="0">
+                                        </div>
+                                        <div class="form-group col-3">
+                                            <label for="bill-f3">Fascia F3</label>
+                                            <input type="number" id="bill-f3" min="0" value="0">
+                                        </div>
+                                        <div class="form-group col-3">
+                                            <label for="bill-luce-totale">Lettura Totale</label>
+                                            <input type="number" id="bill-luce-totale" min="0" placeholder="Calcolato..." required>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Campi specifici GAS/ACQUA (Lettura singola) -->
+                                <div id="fields-gas-acqua" class="utility-specific-fields hidden">
+                                    <h4 class="section-divider" id="label-lettura-gas-acqua">Lettura Contatore (m³ / SMC)</h4>
+                                    <div class="form-group">
+                                        <label for="bill-reading">Valore Lettura Contatore</label>
+                                        <input type="number" id="bill-reading" min="0" placeholder="Valore numerico progressivo...">
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="bill-notes">Note bolletta</label>
+                                    <textarea id="bill-notes" rows="2" placeholder="Es. Consumi stimati, note fornitore..."></textarea>
+                                </div>
+
+                                <button type="submit" class="btn-primary w-full mt-4">
+                                    <i data-lucide="check"></i>
+                                    <span>Salva Bolletta</span>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- FILTRI & TABELLA STORICO BOLLETTE -->
+                <div class="glass-card bill-history mt-4">
+                    <div class="table-header-filters">
+                        <h3>Storico Bollette Salvate</h3>
+                        <div class="filter-group">
+                            <button class="filter-btn active" data-utility="all">Tutte</button>
+                            <button class="filter-btn" data-utility="LUCE">Luce</button>
+                            <button class="filter-btn" data-utility="GAS">Gas</button>
+                            <button class="filter-btn" data-utility="ACQUA">Acqua</button>
+                        </div>
+                    </div>
+                    <div class="table-responsive mt-3">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Data Bolletta</th>
+                                    <th>Utenza</th>
+                                    <th>Importo Speso</th>
+                                    <th>Lettura Contatore</th>
+                                    <th>Consumo Calcolato</th>
+                                    <th>Tipo Lettura</th>
+                                    <th>Allegato PDF</th>
+                                    <th>Note</th>
+                                    <th>Azioni</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-bollette-body">
+                                <!-- Popolato dinamicamente da JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= TAB: LETTURE MANUALI ================= -->
+            <section id="tab-letture" class="tab-content">
+                <div class="tab-header">
+                    <h2>Letture Manuali Contatore</h2>
+                    <p>Registra periodicamente i valori visualizzati sul contatore per confrontarli con i dati fatturati.</p>
+                </div>
+
+                <div class="grid-2-1">
+                    <!-- Tabella storico letture -->
+                    <div class="glass-card">
+                        <div class="table-header-filters">
+                            <h3>Storico Autoletture Rilevate</h3>
+                            <div class="filter-group">
+                                <button class="filter-btn-reading active" data-utility="all">Tutte</button>
+                                <button class="filter-btn-reading" data-utility="LUCE">Luce</button>
+                                <button class="filter-btn-reading" data-utility="GAS">Gas</button>
+                                <button class="filter-btn-reading" data-utility="ACQUA">Acqua</button>
+                            </div>
+                        </div>
+                        <div class="table-responsive mt-3">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Data Lettura</th>
+                                        <th>Utenza</th>
+                                        <th>Valore Lettura</th>
+                                        <th>Note / Dettagli</th>
+                                        <th>Azioni</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="table-letture-body">
+                                    <!-- Popolato da JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Modulo per inserimento lettura -->
+                    <div class="glass-card">
+                        <h3>Registra Nuova Rilevazione</h3>
+                        <p class="subtitle">Effettua una lettura fisica del contatore e digitalizzala.</p>
+                        
+                        <form id="form-lettura" class="mt-3">
+                            <div class="form-group">
+                                <label for="read-utility">Tipo Utenza</label>
+                                <select id="read-utility" required>
+                                    <option value="LUCE">💡 Luce (Energia)</option>
+                                    <option value="GAS">🔥 Gas Naturale</option>
+                                    <option value="ACQUA">💧 Acqua (Idrico)</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="read-date">Data Rilevazione</label>
+                                <input type="date" id="read-date" required>
+                            </div>
+
+                            <!-- Sezione Letture Luce (Fasce F1/F2/F3) -->
+                            <div id="read-fields-luce">
+                                <div class="form-row">
+                                    <div class="form-group col-4">
+                                        <label for="read-f1">Fascia F1</label>
+                                        <input type="number" id="read-f1" min="0" value="0">
+                                    </div>
+                                    <div class="form-group col-4">
+                                        <label for="read-f2">Fascia F2</label>
+                                        <input type="number" id="read-f2" min="0" value="0">
+                                    </div>
+                                    <div class="form-group col-4">
+                                        <label for="read-f3">Fascia F3</label>
+                                        <input type="number" id="read-f3" min="0" value="0">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="read-value" id="label-lettura-valore">Lettura Totale Contatore</label>
+                                <input type="number" id="read-value" min="0" placeholder="Inserisci valore numerico progressivo..." required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="read-notes">Note</label>
+                                <input type="text" id="read-notes" placeholder="Es: Lettura a fine mese, contatore di casa...">
+                            </div>
+
+                            <button type="submit" class="btn-primary w-full mt-4">
+                                <i data-lucide="save"></i>
+                                <span>Salva Lettura</span>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= TAB: VERIFICA & DISCREPANZE ================= -->
+            <section id="tab-verifica" class="tab-content">
+                <div class="tab-header">
+                    <h2>Verifica Anomalie e Discrepanze</h2>
+                    <p>Confronto automatico tra i consumi stimati in bolletta e le autoletture fisiche per evitare sovrafatturazioni.</p>
+                </div>
+
+                <!-- Filtro utenza per la verifica -->
+                <div class="glass-card">
+                    <div class="flex-between flex-wrap gap-4">
+                        <div class="filter-group">
+                            <label for="audit-utility-select" class="mr-2 font-medium">Utenza da analizzare:</label>
+                            <select id="audit-utility-select" class="select-styled">
+                                <option value="LUCE">💡 Energia Elettrica</option>
+                                <option value="GAS">🔥 Gas Naturale</option>
+                                <option value="ACQUA">💧 Servizio Idrico</option>
+                            </select>
+                        </div>
+                        <div class="audit-summary-badges">
+                            <span class="badge badge-success" id="audit-badge-ok">Allineato: 0</span>
+                            <span class="badge badge-warning" id="audit-badge-warn">Stime Eccessive: 0</span>
+                            <span class="badge badge-danger" id="audit-badge-err">Conguagli Pendenti: 0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tabella delle discrepanze -->
+                <div class="glass-card mt-4">
+                    <h3>Report di Audit delle Bollette</h3>
+                    <p class="subtitle">Ogni bolletta viene confrontata con la lettura manuale dell'utente più vicina alla data di fine fatturazione.</p>
+                    
+                    <div class="table-responsive mt-3">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Bolletta (Data)</th>
+                                    <th>Lettura Bolletta</th>
+                                    <th>Lettura Manuale (Data)</th>
+                                    <th>Discrepanza Rilevata</th>
+                                    <th>Stato Rilevazione</th>
+                                    <th>Stato Verifica</th>
+                                    <th>Azione Suggerita</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-audit-body">
+                                <!-- Popolato da JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Analisi Visuale Discrepanze -->
+                <div class="glass-card mt-4">
+                    <h3>Progressione Letture: Bollette vs Letture Reali</h3>
+                    <p class="subtitle">La linea rossa rappresenta il valore fatturato, la linea verde rappresenta la lettura reale. Se la linea rossa si trova molto sopra quella verde, stai pagando più del dovuto.</p>
+                    <div class="chart-wrapper mt-3" style="height: 350px;">
+                        <canvas id="chart-audit-timeline"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= TAB: IMPOSTAZIONI ================= -->
+            <section id="tab-settings" class="tab-content">
+                <div class="tab-header">
+                    <h2>Configurazioni & Backup</h2>
+                    <p>Gestisci la connessione al server, backup dei dati e il profilo utente.</p>
+                </div>
+
+                <div class="grid-2-1">
+                    <!-- Configurazione Connessione & Utenze -->
+                    <div class="glass-card">
+                        <h3>Impostazioni di Collegamento</h3>
+                        <p class="subtitle">Configura dove e come vengono salvati i tuoi consumi.</p>
+                        
+                        <div class="mt-4">
+                            <div class="form-group">
+                                <label for="settings-storage-mode">Modalità Archiviazione</label>
+                                <select id="settings-storage-mode">
+                                    <option value="server">🐍 Python Backend Server (Consigliato - Sincronizzato)</option>
+                                    <option value="local">💾 LocalStorage / IndexedDB (Locale del Browser)</option>
+                                </select>
+                                <span class="help-text">Usa la modalità Locale solo se l'app è ospitata come sito statico in Home Assistant senza backend Python attivo.</span>
+                            </div>
+
+                            <div class="form-group" id="settings-api-url-group">
+                                <label for="settings-api-url">Indirizzo Server Backend</label>
+                                <input type="url" id="settings-api-url" placeholder="http://192.168.1.15:8000">
+                                <span class="help-text">Indirizzo IP e porta in cui è in esecuzione il backend server.py (es. su PC o Raspberry).</span>
+                            </div>
+
+                            <button id="btn-save-settings" class="btn-primary mt-3">
+                                <i data-lucide="check-circle-2"></i>
+                                <span>Salva Configurazione</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Esportazione / Importazione Backup -->
+                    <div class="glass-card">
+                        <h3>Backup e Ripristino</h3>
+                        <p class="subtitle">Esporta tutti i tuoi storici in file JSON scaricabili sul tuo dispositivo.</p>
+                        
+                        <div class="mt-4 flex-col gap-3">
+                            <div class="backup-action-box">
+                                <h4>Esporta i dati</h4>
+                                <p>Scarica un unico file JSON contenente lo storico di bollette e letture manuali di tutte le utenze.</p>
+                                <button id="btn-export-backup" class="btn-secondary w-full mt-2">
+                                    <i data-lucide="download"></i>
+                                    <span>Scarica Backup JSON</span>
+                                </button>
+                            </div>
+
+                            <div class="backup-action-box mt-3">
+                                <h4>Ripristina dati da file</h4>
+                                <p>Carica un file JSON di backup precedentemente scaricato per ripristinare o sincronizzare lo storico.</p>
+                                <div class="mt-2">
+                                    <input type="file" id="import-backup-file" accept=".json" class="hidden">
+                                    <button id="btn-trigger-import" class="btn-secondary w-full">
+                                        <i data-lucide="upload"></i>
+                                        <span>Seleziona File di Backup</span>
+                                    </button>
+                                </div>
+                                <span id="import-status-text" class="help-text mt-1 block"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modale Dettagli Bolletta Side-by-Side (Visualizzazione) -->
+    <div id="modal-dettaglio-bolletta" class="modal hidden">
+        <div class="modal-content glass-card">
+            <div class="modal-header">
+                <h3 id="modal-title">Dettaglio Bolletta</h3>
+                <button class="btn-close" id="btn-close-modal">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+            <div class="split-view">
+                <!-- Sinistra: PDF Viewer -->
+                <div class="pdf-section">
+                    <iframe id="modal-pdf-frame" src=""></iframe>
+                </div>
+                <!-- Destra: Dati -->
+                <div class="form-section">
+                    <div class="details-list" id="modal-details-content">
+                        <!-- Riempito da JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JS Logica -->
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Virtual environment folders
+venv/
+.venv/
+.env/
+.env
+ENV/
+env/
+
+# Dati locali e runtime: l'intera cartella database NON va versionata
+# (include i JSON dati, i file delle letture manuali *_man_* e i PDF salvati in database/pdfs)
+database/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# IDE/editor settings
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Pytest / type checker cache
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
