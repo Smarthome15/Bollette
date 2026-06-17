@@ -13,9 +13,15 @@ venv/
 ENV/
 env/
 
+# Segreti locali (chiavi API, ecc.) - NON versionare
+secrets_local.py
+
 # Dati locali e runtime: l'intera cartella database NON va versionata
 # (include i JSON dati, i file delle letture manuali *_man_* e i PDF salvati in database/pdfs)
 database/
+
+# Backup locali del codice app del NAS (creati prima di ogni pubblicazione)
+backup_nas/
 
 # Distribution / packaging
 build/

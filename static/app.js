@@ -23,6 +23,16 @@ const state = {
 // Mappa traduzione mesi
 const MESI_IT_BREVE = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
 
+// Profili utente (senza password): determinano il prefisso usato per i file dati.
+// Il login avviene interamente lato client, così funziona anche col backend spento
+// (sola lettura tramite i JSON statici serviti da Home Assistant).
+const PROFILI_UTENTE = {
+    Matteo: { ruolo: "admin", prefix: "UserA" },
+    Dario:  { ruolo: "user",  prefix: "UserB" },
+    Test:   { ruolo: "user",  prefix: "UserC" },
+    Test_2: { ruolo: "user",  prefix: "UserD" }
+};
+
 // --- INIZIALIZZAZIONE ---
 document.addEventListener("DOMContentLoaded", () => {
     initSettings();
@@ -43,20 +53,23 @@ function initSettings() {
     }
     
     if (savedApiUrl) {
+        // L'utente ha configurato esplicitamente l'indirizzo del backend (es. il PC).
         state.apiBaseUrl = savedApiUrl;
+    } else if (window.location.port === "8000") {
+        // L'app è servita dallo stesso backend Python: usa percorso relativo.
+        state.apiBaseUrl = "";
     } else {
-        // Se siamo su una porta diversa da quella del backend (es: 8123 di Home Assistant),
-        // impostiamo l'indirizzo IP corrente sulla porta 8000 di default
-        if (window.location.port !== "8000" && window.location.hostname) {
-            state.apiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
-        } else {
-            state.apiBaseUrl = ""; // percorso relativo
-        }
+        // App servita altrove (es. Home Assistant su :8123) e nessun indirizzo backend
+        // configurato. NON indoviniamo l'host (il backend è su un'altra macchina, es. il
+        // PC): restiamo relativi così, se il backend non risponde, scatta il fallback di
+        // lettura dei JSON statici serviti da HA. Per inserire/salvare imposta l'indirizzo
+        // del PC (es. http://192.168.1.11:8000) in Impostazioni.
+        state.apiBaseUrl = "";
     }
-    
+
     // Compila i campi form impostazioni
     document.getElementById("settings-storage-mode").value = state.storageMode;
-    document.getElementById("settings-api-url").value = state.apiBaseUrl || `${window.location.protocol}//${window.location.hostname}:8000`;
+    document.getElementById("settings-api-url").value = state.apiBaseUrl;
     
     if (state.storageMode === "local") {
         document.getElementById("settings-api-url-group").classList.add("hidden");
@@ -96,6 +109,22 @@ function initEventListeners() {
 
     // Salvataggio Impostazioni
     document.getElementById("btn-save-settings").addEventListener("click", saveSettings);
+
+    // Controllo stato codice applicazione (locale vs NAS)
+    document.getElementById("btn-check-app-status").addEventListener("click", () => checkAppCodeStatus(true));
+
+    // Pubblicazione del codice app sul NAS (con backup preventivo)
+    document.getElementById("btn-publish-app").addEventListener("click", publishAppToNas);
+
+    // Banner di avviso codice app: vai alle impostazioni / chiudi
+    document.getElementById("app-code-warning-go").addEventListener("click", () => {
+        switchTab("tab-settings");
+        document.getElementById("app-code-warning").classList.add("hidden");
+        checkAppCodeStatus(true);
+    });
+    document.getElementById("app-code-warning-close").addEventListener("click", () => {
+        document.getElementById("app-code-warning").classList.add("hidden");
+    });
     
     // Selezione Modalità Storage in Impostazioni
     document.getElementById("settings-storage-mode").addEventListener("change", (e) => {
@@ -290,38 +319,21 @@ function switchTab(tabId) {
 async function handleLogin(e) {
     e.preventDefault();
     const username = document.getElementById("login-username").value;
-    const password = document.getElementById("login-password").value;
     const errorEl = document.getElementById("login-error");
     errorEl.textContent = "";
 
-    if (state.storageMode === "local") {
-        // In modalità local storage, simuliamo un login di successo istantaneo
-        const prefixMap = { Matteo: "UserA", Dario: "UserB", Test: "UserC", Test_2: "UserD" };
-        state.user = { username, ruolo: username === "Matteo" ? "admin" : "user", prefix: prefixMap[username] };
-        sessionStorage.setItem("consumicasa_user", JSON.stringify(state.user));
-        checkLogin();
+    // Login senza password e senza backend: il profilo scelto determina il prefisso
+    // dei file dati. Funziona identico col server acceso o spento (in quest'ultimo
+    // caso i dati vengono letti dai JSON statici serviti da Home Assistant).
+    const profilo = PROFILI_UTENTE[username];
+    if (!profilo) {
+        errorEl.textContent = "Profilo utente non valido.";
         return;
     }
 
-    try {
-        const response = await fetch(`${state.apiBaseUrl}/api/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username, password })
-        });
-        
-        const data = await response.json();
-        if (response.ok && data.success) {
-            state.user = { username: data.username, ruolo: data.ruolo, prefix: data.prefix };
-            sessionStorage.setItem("consumicasa_user", JSON.stringify(state.user));
-            checkLogin();
-        } else {
-            errorEl.textContent = data.message || "Credenziali non valide.";
-        }
-    } catch (err) {
-        console.error("Errore login:", err);
-        errorEl.textContent = "Impossibile connettersi al server backend.";
-    }
+    state.user = { username, ruolo: profilo.ruolo, prefix: profilo.prefix };
+    sessionStorage.setItem("consumicasa_user", JSON.stringify(state.user));
+    checkLogin();
 }
 
 function handleLogout() {
@@ -628,58 +640,76 @@ function updateBackendStatusBadge(status) {
 }
 
 // --- RICEZIONE E CARICAMENTO PDF ---
+// L'inserimento di una bolletta PDF richiede SEMPRE l'estrazione dati via Gemini.
+// Se Gemini non è raggiungibile (offline, modalità locale, errore API), il PDF
+// NON viene accettato: meglio bloccare l'inserimento che pre-compilare con dati
+// inaffidabili. L'utente viene avvisato e può inserire la bolletta a mano (senza PDF).
 async function handlePdfSelected(file) {
-    state.tempPdfFile = file;
-    
-    const dragDropArea = document.getElementById("pdf-drag-drop");
     const uploadingBadge = document.getElementById("uploading-badge");
     const previewBox = document.getElementById("pdf-preview-box");
     const previewFrame = document.getElementById("pdf-preview-frame");
-    
-    dragDropArea.classList.add("hidden");
-    uploadingBadge.classList.remove("hidden");
-    
-    // Genera URL locale per anteprima istantanea nel browser
-    const blobUrl = URL.createObjectURL(file);
-    previewFrame.src = blobUrl;
-    previewBox.classList.remove("hidden");
-    
-    // Se siamo offline o in locale, saltiamo il parsing server
+
+    // In modalità locale non c'è backend: l'estrazione automatica è impossibile.
     if (state.storageMode === "local") {
-        uploadingBadge.classList.add("hidden");
+        blockPdfInsertion("Senza connessione al server/Gemini non è possibile leggere la bolletta PDF. Inserisci i dati a mano.");
         return;
     }
-    
-    // Invia al backend per l'estrazione dati con pdfplumber/Gemini
+
+    // Mostra lo stato di elaborazione, ma NON agganciare ancora il PDF né l'anteprima:
+    // lo facciamo solo se Gemini risponde con successo.
+    state.tempPdfFile = file;
+    document.getElementById("pdf-drag-drop").classList.add("hidden");
+    uploadingBadge.classList.remove("hidden");
+
     try {
         const formData = new FormData();
         formData.append("pdf", file);
         formData.append("utility", document.getElementById("bill-utility").value);
-        
+
         const response = await fetch(`${state.apiBaseUrl}/api/parse-pdf`, {
             method: "POST",
             body: formData
         });
-        
+
         if (response.ok) {
             const parsed = await response.json();
+            // Successo: ora mostriamo l'anteprima e pre-compiliamo il form.
+            previewFrame.src = URL.createObjectURL(file);
+            previewBox.classList.remove("hidden");
             prefillBillForm(parsed);
-            
-            // Visualizza banner IA
+
             const aiBanner = document.getElementById("ai-status-banner");
             const aiText = document.getElementById("ai-status-text");
             aiBanner.classList.remove("hidden");
-            if (parsed.parsed_via === "gemini") {
-                aiText.textContent = "Analisi Gemini AI completata con successo!";
-            } else {
-                aiText.textContent = "Estrazione dati completata tramite motore euristico locale.";
-            }
+            aiText.textContent = "Analisi Gemini AI completata con successo!";
+        } else {
+            // Il backend c'è ma Gemini non è disponibile (503) o altro errore: blocca.
+            let msg = "Estrazione automatica non riuscita: impossibile leggere la bolletta.";
+            try {
+                const errData = await response.json();
+                if (errData && errData.message) msg = errData.message;
+            } catch (e) { /* risposta non JSON: usa il messaggio di default */ }
+            blockPdfInsertion(msg);
         }
     } catch (err) {
+        // Errore di rete: il server Python sulla porta 8000 non è raggiungibile.
         console.error("Errore parsing PDF:", err);
+        blockPdfInsertion("Impossibile raggiungere il server per leggere la bolletta. Verifica la connessione e riprova, oppure inserisci i dati a mano.");
     } finally {
         uploadingBadge.classList.add("hidden");
     }
+}
+
+// Blocca l'inserimento del PDF: rimuove il file agganciato, ripristina la drag-drop
+// area e mostra un avviso. Nessun dato viene pre-compilato.
+function blockPdfInsertion(message) {
+    removePdfFile();
+    document.getElementById("uploading-badge").classList.add("hidden");
+    const aiBanner = document.getElementById("ai-status-banner");
+    const aiText = document.getElementById("ai-status-text");
+    aiBanner.classList.remove("hidden");
+    aiBanner.classList.add("ai-banner-warning");
+    aiText.textContent = message;
 }
 
 function prefillBillForm(data) {
@@ -706,7 +736,9 @@ function removePdfFile() {
     document.getElementById("pdf-preview-box").classList.add("hidden");
     document.getElementById("pdf-preview-frame").src = "";
     document.getElementById("pdf-drag-drop").classList.remove("hidden");
-    document.getElementById("ai-status-banner").classList.add("hidden");
+    const aiBanner = document.getElementById("ai-status-banner");
+    aiBanner.classList.add("hidden");
+    aiBanner.classList.remove("ai-banner-warning");
 }
 
 function resetBillForm() {
@@ -1725,7 +1757,10 @@ async function checkSyncAndLoad() {
         loadData();
         return;
     }
-    
+
+    // In parallelo (non bloccante) verifica anche lo stato del codice dell'app sul NAS.
+    notifyAppCodeStatus();
+
     try {
         const response = await fetch(`${state.apiBaseUrl}/api/sync/status?user=${state.user.username}`);
         if (response.ok) {
@@ -1742,6 +1777,188 @@ async function checkSyncAndLoad() {
     } catch(err) {
         console.error("Errore controllo sync:", err);
         loadData();
+    }
+}
+
+// --- CONTROLLO STATO CODICE APPLICAZIONE (locale vs NAS) ---
+
+// Recupera lo stato dal backend. Ritorna l'oggetto report o null in caso di errore/offline.
+async function fetchAppCodeStatus() {
+    if (state.storageMode === "local") return null;
+    try {
+        const response = await fetch(`${state.apiBaseUrl}/api/app/status`);
+        if (!response.ok) return null;
+        const data = await response.json();
+        if (!data.success) return null;
+        return { richiede_attenzione: data.richiede_attenzione, report: data.report };
+    } catch (err) {
+        console.error("Errore controllo stato app:", err);
+        return null;
+    }
+}
+
+// Avviso sintetico non bloccante al login se il codice app sul NAS è disallineato.
+async function notifyAppCodeStatus() {
+    const banner = document.getElementById("app-code-warning");
+    if (!banner) return;
+    const res = await fetchAppCodeStatus();
+    if (!res || !res.richiede_attenzione) {
+        banner.classList.add("hidden");
+        return;
+    }
+    const r = res.report.riepilogo || {};
+    const diversi = (r.diversi || 0) + (r.solo_locale || 0) + (r.solo_remoto || 0);
+    document.getElementById("app-code-warning-text").textContent =
+        `Il codice dell'app sul NAS è disallineato: ${diversi} file da pubblicare/verificare.`;
+    banner.classList.remove("hidden");
+    if (window.lucide) lucide.createIcons();
+}
+
+// Controllo dettagliato mostrato nella scheda Impostazioni.
+async function checkAppCodeStatus(mostraCaricamento) {
+    const resultBox = document.getElementById("app-status-result");
+    const summaryBox = document.getElementById("app-status-summary");
+
+    if (state.storageMode === "local") {
+        summaryBox.style.display = "none";
+        resultBox.innerHTML = `<p class="help-text">Controllo non disponibile in modalità archiviazione locale.</p>`;
+        return;
+    }
+
+    if (mostraCaricamento) {
+        resultBox.innerHTML = `<p class="help-text">Confronto in corso…</p>`;
+    }
+
+    const res = await fetchAppCodeStatus();
+    if (!res) {
+        summaryBox.style.display = "none";
+        resultBox.innerHTML = `<p class="help-text">Impossibile contattare il NAS o il server backend. Riprova quando il NAS è online.</p>`;
+        return;
+    }
+
+    const report = res.report;
+    if (report.stato === "offline") {
+        summaryBox.style.display = "none";
+        resultBox.innerHTML = `<p class="help-text">NAS non raggiungibile: impossibile confrontare il codice.</p>`;
+        return;
+    }
+    if (report.stessa_radice) {
+        summaryBox.style.display = "none";
+        resultBox.innerHTML = `<p class="help-text">L'applicazione sta già girando dalla cartella sul NAS: locale e produzione coincidono.</p>`;
+        return;
+    }
+    if (!report.remoto_presente) {
+        summaryBox.style.display = "none";
+        resultBox.innerHTML = `<p class="help-text">La cartella dell'app sul NAS non è presente o non è accessibile.</p>`;
+        return;
+    }
+
+    const c = report.riepilogo || {};
+    document.getElementById("app-badge-id").textContent = `Identici: ${c.identici || 0}`;
+    document.getElementById("app-badge-diff").textContent = `Diversi: ${c.diversi || 0}`;
+    document.getElementById("app-badge-loc").textContent = `Solo locale: ${c.solo_locale || 0}`;
+    document.getElementById("app-badge-rem").textContent = `Solo NAS: ${c.solo_remoto || 0}`;
+    summaryBox.style.display = "";
+
+    const nonAllineati = (report.dettagli || []).filter(d => d.stato !== "identico");
+
+    if (nonAllineati.length === 0) {
+        resultBox.innerHTML = `<p class="text-success font-medium"><i data-lucide="check-circle-2"></i> Il codice dell'app sul NAS è allineato a quello locale.</p>`;
+        if (window.lucide) lucide.createIcons();
+        return;
+    }
+
+    const badgePerStato = (stato) => {
+        if (stato === "diverso") return `<span class="badge badge-warning">Diverso</span>`;
+        if (stato === "solo_locale") return `<span class="badge badge-secondary">Solo su PC</span>`;
+        if (stato === "solo_remoto") return `<span class="badge badge-info">Solo su NAS</span>`;
+        return `<span class="badge badge-success">Identico</span>`;
+    };
+
+    const righe = nonAllineati.map(d => `
+        <tr>
+            <td class="font-medium">${d.file}</td>
+            <td>${badgePerStato(d.stato)}</td>
+            <td style="font-size:0.85rem;">${d.locale_data}</td>
+            <td style="font-size:0.85rem;">${d.remoto_data}</td>
+        </tr>
+    `).join("");
+
+    resultBox.innerHTML = `
+        <p class="subtitle">${nonAllineati.length} file non allineati. La pubblicazione sul NAS va eseguita manualmente (copia di <code>${report.app_dir_locale || "locale"}</code> verso <code>${report.app_dir_remota || "NAS"}</code>, escludendo la cartella <code>database</code>).</p>
+        <div class="table-responsive mt-2">
+            <table class="data-table">
+                <thead>
+                    <tr><th>File</th><th>Stato</th><th>PC (data)</th><th>NAS (data)</th></tr>
+                </thead>
+                <tbody>${righe}</tbody>
+            </table>
+        </div>
+    `;
+    if (window.lucide) lucide.createIcons();
+}
+
+// Pubblica il codice dell'app sul NAS (specchio esatto, con backup preventivo).
+// Operazione che SCRIVE e CANCELLA sul NAS: richiede conferma esplicita.
+async function publishAppToNas() {
+    if (state.storageMode === "local") {
+        alert("La pubblicazione sul NAS non è disponibile in modalità archiviazione locale.");
+        return;
+    }
+
+    // Prima mostra all'utente cosa cambierà (controllo a sola lettura).
+    const pre = await fetchAppCodeStatus();
+    if (!pre || !pre.report || pre.report.stato === "offline") {
+        alert("NAS non raggiungibile: impossibile pubblicare ora.");
+        return;
+    }
+    if (pre.report.stessa_radice) {
+        alert("L'app sta già girando dalla cartella sul NAS: nessuna pubblicazione necessaria.");
+        return;
+    }
+    const c = pre.report.riepilogo || {};
+    const daCopiare = (c.diversi || 0) + (c.solo_locale || 0);
+    const daCancellare = c.solo_remoto || 0;
+
+    const conferma = confirm(
+        "Pubblicare il codice dell'app sul NAS?\n\n" +
+        `• File da copiare/aggiornare sul NAS: ${daCopiare}\n` +
+        `• File da CANCELLARE dal NAS (non più presenti in locale): ${daCancellare}\n\n` +
+        "Prima della pubblicazione verrà salvato un backup del NAS attuale sul PC.\n" +
+        "I dati (cartella database) non vengono toccati.\n\n" +
+        "Procedere?"
+    );
+    if (!conferma) return;
+
+    const resultBox = document.getElementById("app-status-result");
+    const btn = document.getElementById("btn-publish-app");
+    btn.disabled = true;
+    resultBox.innerHTML = `<p class="help-text">Backup del NAS e pubblicazione in corso…</p>`;
+
+    try {
+        const response = await fetch(`${state.apiBaseUrl}/api/app/publish`, { method: "POST" });
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            const r = data.report || {};
+            resultBox.innerHTML = `
+                <p class="text-success font-medium"><i data-lucide="check-circle-2"></i> Pubblicazione completata.</p>
+                <p class="subtitle mt-1">Copiati/aggiornati: ${r.n_copiati || 0} · Cancellati dal NAS: ${r.n_cancellati || 0}.</p>
+                <p class="help-text mt-1">Backup del NAS precedente salvato in: <code>${r.backup_dir || "-"}</code></p>
+            `;
+        } else {
+            const r = data.report || {};
+            const msg = r.errore || (data.error) || "Pubblicazione non riuscita.";
+            resultBox.innerHTML = `<p class="text-danger font-medium">Pubblicazione non riuscita: ${msg}</p>`;
+        }
+    } catch (err) {
+        console.error("Errore pubblicazione su NAS:", err);
+        resultBox.innerHTML = `<p class="text-danger font-medium">Impossibile contattare il server per la pubblicazione.</p>`;
+    } finally {
+        btn.disabled = false;
+        if (window.lucide) lucide.createIcons();
+        // Riallinea il riepilogo dopo l'operazione.
+        checkAppCodeStatus(false);
     }
 }
 

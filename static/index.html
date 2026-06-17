@@ -75,14 +75,22 @@
 
         <!-- Contenuto Principale -->
         <main class="content-area">
-            
+
+            <!-- Banner non bloccante: codice app locale disallineato rispetto al NAS -->
+            <div id="app-code-warning" class="app-code-banner hidden">
+                <i data-lucide="alert-triangle"></i>
+                <span id="app-code-warning-text">Il codice dell'app sul NAS è disallineato.</span>
+                <button id="app-code-warning-go" class="btn-link">Apri Impostazioni</button>
+                <button id="app-code-warning-close" class="btn-link" title="Chiudi">✕</button>
+            </div>
+
             <!-- SCHEDA LOGIN / BLOCCO ACCESSO -->
             <section id="login-overlay" class="login-panel">
                 <div class="glass-card login-card">
-                    <i data-lucide="lock" class="login-icon"></i>
+                    <i data-lucide="user-round" class="login-icon"></i>
                     <h2>Accedi ai Consumi</h2>
-                    <p class="subtitle">Seleziona il tuo profilo ed inserisci la password</p>
-                    
+                    <p class="subtitle">Seleziona il tuo profilo per entrare</p>
+
                     <form id="login-form">
                         <div class="form-group">
                             <label for="login-username">Profilo Utente</label>
@@ -92,10 +100,6 @@
                                 <option value="Test">Test (UserC)</option>
                                 <option value="Test_2">Test 2 (UserD)</option>
                             </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="login-password">Password</label>
-                            <input type="password" id="login-password" placeholder="Inserisci password..." required>
                         </div>
                         <div class="error-message" id="login-error"></div>
                         <button type="submit" class="btn-primary w-full">
@@ -600,8 +604,8 @@
 
                             <div class="form-group" id="settings-api-url-group">
                                 <label for="settings-api-url">Indirizzo Server Backend</label>
-                                <input type="url" id="settings-api-url" placeholder="http://192.168.1.15:8000">
-                                <span class="help-text">Indirizzo IP e porta in cui è in esecuzione il backend server.py (es. su PC o Raspberry).</span>
+                                <input type="url" id="settings-api-url" placeholder="http://192.168.1.11:8000">
+                                <span class="help-text">Indirizzo IP e porta del backend server.py (il PC dove gira, es. <code>http://192.168.1.11:8000</code>). Serve per inserire i PDF e salvare. Lascia vuoto per la sola lettura dei dati quando il PC è spento (serviti da Home Assistant).</span>
                             </div>
 
                             <button id="btn-save-settings" class="btn-primary mt-3">
@@ -639,6 +643,37 @@
                                 <span id="import-status-text" class="help-text mt-1 block"></span>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Stato del codice dell'applicazione: locale (sviluppo) vs NAS (produzione) -->
+                <div class="glass-card mt-4">
+                    <div class="flex-between flex-wrap gap-4">
+                        <div>
+                            <h3>Stato applicazione (locale vs NAS)</h3>
+                            <p class="subtitle">Confronta i file del codice dell'app sul PC con la copia "di produzione" su <code>\\192.168.1.15\config\www\bollette</code>. Con "Pubblica su NAS" copi il codice locale sul NAS (specchio esatto). Sono sempre esclusi i dati (<code>database</code>), l'ambiente virtuale e i file di servizio.</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button id="btn-check-app-status" class="btn-secondary">
+                                <i data-lucide="refresh-cw"></i>
+                                <span>Controlla</span>
+                            </button>
+                            <button id="btn-publish-app" class="btn-primary">
+                                <i data-lucide="upload-cloud"></i>
+                                <span>Pubblica su NAS</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="app-status-summary" class="audit-summary-badges mt-3" style="display:none;">
+                        <span class="badge badge-success" id="app-badge-id">Identici: 0</span>
+                        <span class="badge badge-warning" id="app-badge-diff">Diversi: 0</span>
+                        <span class="badge badge-secondary" id="app-badge-loc">Solo locale: 0</span>
+                        <span class="badge badge-secondary" id="app-badge-rem">Solo NAS: 0</span>
+                    </div>
+
+                    <div id="app-status-result" class="mt-3">
+                        <p class="help-text">Premi "Controlla" per confrontare il codice locale con quello sul NAS.</p>
                     </div>
                 </div>
             </section>

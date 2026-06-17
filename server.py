@@ -5,6 +5,7 @@ import uuid
 import re
 import socket
 import shutil
+import hashlib
 import traceback
 from datetime import datetime
 import webbrowser
@@ -18,7 +19,11 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 import pdfplumber
 
-from config import UTENTI_CONFIG, API_KEY_GEMINI, DB_DIR_LOCALE, PDF_DIR, DB_DIR_REMOTA
+from config import (
+    UTENTI_CONFIG, API_KEY_GEMINI, DB_DIR_LOCALE, PDF_DIR, DB_DIR_REMOTA,
+    APP_DIR_LOCALE, APP_DIR_REMOTA, APP_SYNC_ESCLUSI, APP_SYNC_EST_ESCLUSE,
+    APP_BACKUP_DIR
+)
 
 # --- UTILITIES DI SINCRONIZZAZIONE NAS ---
 def connessione_nas_attiva():
@@ -127,6 +132,237 @@ def esegui_azione_sincronizzazione(utente: str, azione: str, chiave_specifica: s
     except Exception as e:
         return False, f"Errore sync: {e}"
 
+# --- CONFRONTO DEL CODICE DELL'APPLICAZIONE (locale vs NAS) ---
+# Verifica se la copia "di produzione" dell'app sul NAS è allineata a quella
+# locale. Sola lettura: non copia nulla. Pensato per girare anche su Raspberry,
+# quindi confronta prima la DIMENSIONE (economico) e calcola l'hash del contenuto
+# SOLO quando le dimensioni coincidono (evita I/O inutile su file già diversi).
+
+def _path_escluso(rel_path: str):
+    # Esclude se un qualsiasi segmento della path relativa è nella lista,
+    # o se l'estensione del file è tra quelle ignorate.
+    parti = rel_path.replace("\\", "/").split("/")
+    for p in parti:
+        if p in APP_SYNC_ESCLUSI:
+            return True
+    _, ext = os.path.splitext(rel_path)
+    if ext.lower() in APP_SYNC_EST_ESCLUSE:
+        return True
+    return False
+
+def _elenca_file_app(root: str):
+    # Restituisce un dict { path_relativa(posix): (dimensione, mtime) } per tutti
+    # i file sotto 'root', saltando le cartelle/estensioni escluse. Tollerante:
+    # se 'root' non esiste o non è leggibile, ritorna un dict vuoto.
+    risultato = {}
+    if not root or not os.path.isdir(root):
+        return risultato
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Pota le cartelle escluse in-place così os.walk non vi scende dentro.
+        dirnames[:] = [d for d in dirnames if d not in APP_SYNC_ESCLUSI]
+        for nome in filenames:
+            full = os.path.join(dirpath, nome)
+            rel = os.path.relpath(full, root).replace("\\", "/")
+            if _path_escluso(rel):
+                continue
+            try:
+                st = os.stat(full)
+                risultato[rel] = (st.st_size, st.st_mtime)
+            except OSError:
+                # File sparito o non accessibile durante la scansione: ignora.
+                continue
+    return risultato
+
+def _hash_file(path: str, blocchi=65536):
+    # MD5 a blocchi: sufficiente per il controllo di integrità (non crittografico)
+    # e leggero in memoria. Ritorna None se il file non è leggibile.
+    h = hashlib.md5()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(blocchi), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+def analizza_stato_applicazione():
+    # Confronta APP_DIR_LOCALE con APP_DIR_REMOTA file per file.
+    # Ritorna (richiede_attenzione, report). Lo stato per ciascun file è uno di:
+    #   identico / diverso / solo_locale / solo_remoto.
+    if not connessione_nas_attiva():
+        return False, {"stato": "offline", "dettagli": [], "riepilogo": {}}
+
+    # Caso particolare: l'app gira già dal NAS (locale == remoto) -> tutto allineato.
+    try:
+        stessa_radice = os.path.normcase(os.path.abspath(APP_DIR_LOCALE)) == \
+                        os.path.normcase(os.path.abspath(APP_DIR_REMOTA))
+    except Exception:
+        stessa_radice = False
+
+    if stessa_radice or not os.path.isdir(APP_DIR_REMOTA):
+        return False, {
+            "stato": "online",
+            "stessa_radice": stessa_radice,
+            "remoto_presente": os.path.isdir(APP_DIR_REMOTA),
+            "dettagli": [],
+            "riepilogo": {"identici": 0, "diversi": 0, "solo_locale": 0, "solo_remoto": 0}
+        }
+
+    locali = _elenca_file_app(APP_DIR_LOCALE)
+    remoti = _elenca_file_app(APP_DIR_REMOTA)
+
+    tutte_le_path = sorted(set(locali.keys()) | set(remoti.keys()))
+    dettagli = []
+    conteggi = {"identici": 0, "diversi": 0, "solo_locale": 0, "solo_remoto": 0}
+    richiede_attenzione = False
+
+    for rel in tutte_le_path:
+        in_loc = rel in locali
+        in_rem = rel in remoti
+
+        info = {"file": rel, "stato": "identico", "locale_data": "-", "remoto_data": "-"}
+        if in_loc:
+            info["locale_data"] = datetime.fromtimestamp(locali[rel][1]).strftime('%d/%m/%Y %H:%M:%S')
+        if in_rem:
+            info["remoto_data"] = datetime.fromtimestamp(remoti[rel][1]).strftime('%d/%m/%Y %H:%M:%S')
+
+        if in_loc and not in_rem:
+            info["stato"] = "solo_locale"
+            conteggi["solo_locale"] += 1
+            richiede_attenzione = True
+        elif in_rem and not in_loc:
+            info["stato"] = "solo_remoto"
+            conteggi["solo_remoto"] += 1
+            richiede_attenzione = True
+        else:
+            size_loc = locali[rel][0]
+            size_rem = remoti[rel][0]
+            if size_loc != size_rem:
+                # Dimensioni diverse: sicuramente diverso, niente hash.
+                info["stato"] = "diverso"
+                conteggi["diversi"] += 1
+                richiede_attenzione = True
+            else:
+                # Stessa dimensione: confronta l'hash del contenuto.
+                h_loc = _hash_file(os.path.join(APP_DIR_LOCALE, rel))
+                h_rem = _hash_file(os.path.join(APP_DIR_REMOTA, rel))
+                if h_loc is not None and h_loc == h_rem:
+                    info["stato"] = "identico"
+                    conteggi["identici"] += 1
+                else:
+                    info["stato"] = "diverso"
+                    conteggi["diversi"] += 1
+                    richiede_attenzione = True
+
+        dettagli.append(info)
+
+    report = {
+        "stato": "online",
+        "stessa_radice": False,
+        "remoto_presente": True,
+        "app_dir_locale": APP_DIR_LOCALE,
+        "app_dir_remota": APP_DIR_REMOTA,
+        "dettagli": dettagli,
+        "riepilogo": conteggi
+    }
+    return richiede_attenzione, report
+
+def _backup_codice_nas():
+    # Salva in locale (APP_BACKUP_DIR/nas_<timestamp>/) una copia del codice app
+    # attualmente presente sul NAS, PRIMA di sovrascriverlo. Rete di sicurezza.
+    # Restituisce (ok, percorso_backup_o_messaggio_errore).
+    remoti = _elenca_file_app(APP_DIR_REMOTA)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dest_root = os.path.join(APP_BACKUP_DIR, f"nas_{timestamp}")
+    try:
+        os.makedirs(dest_root, exist_ok=True)
+        for rel in remoti.keys():
+            src = os.path.join(APP_DIR_REMOTA, rel)
+            dst = os.path.join(dest_root, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+        return True, dest_root
+    except Exception as e:
+        return False, f"Errore durante il backup del NAS: {e}"
+
+def pubblica_app_su_nas():
+    # Pubblica (specchio esatto) il CODICE dell'app da locale verso il NAS:
+    # copia i file nuovi/diversi e CANCELLA dal NAS quelli non più presenti in locale.
+    # Rispetta le esclusioni (database/, .venv/, .git/, __pycache__/, ...): i DATI
+    # non vengono mai toccati. Prima di scrivere salva un backup locale del NAS.
+    # Restituisce (successo, report_azioni).
+    if not connessione_nas_attiva():
+        return False, {"errore": "NAS non raggiungibile."}
+
+    # Sicurezza: non pubblicare se l'app gira già dal NAS (locale == remoto).
+    try:
+        stessa_radice = os.path.normcase(os.path.abspath(APP_DIR_LOCALE)) == \
+                        os.path.normcase(os.path.abspath(APP_DIR_REMOTA))
+    except Exception:
+        stessa_radice = False
+    if stessa_radice:
+        return False, {"errore": "L'app gira già dalla cartella sul NAS: nessuna pubblicazione necessaria."}
+
+    if not os.path.isdir(APP_DIR_REMOTA):
+        try:
+            os.makedirs(APP_DIR_REMOTA, exist_ok=True)
+        except Exception as e:
+            return False, {"errore": f"Impossibile creare la cartella remota: {e}"}
+
+    # 0) BACKUP del codice attualmente sul NAS, prima di toccare qualsiasi cosa.
+    #    Se il backup fallisce, NON procediamo: meglio non aggiornare che farlo
+    #    senza rete di sicurezza.
+    backup_ok, backup_info = _backup_codice_nas()
+    if not backup_ok:
+        return False, {"errore": backup_info}
+
+    locali = _elenca_file_app(APP_DIR_LOCALE)
+    remoti = _elenca_file_app(APP_DIR_REMOTA)
+
+    copiati = []
+    cancellati = []
+    errori = []
+
+    # 1) Copia da locale -> NAS i file nuovi o diversi (per dimensione o hash).
+    for rel in locali.keys():
+        src = os.path.join(APP_DIR_LOCALE, rel)
+        dst = os.path.join(APP_DIR_REMOTA, rel)
+        try:
+            serve_copia = True
+            if rel in remoti and locali[rel][0] == remoti[rel][0]:
+                # Stessa dimensione: copia solo se l'hash differisce.
+                if _hash_file(src) == _hash_file(dst):
+                    serve_copia = False
+            if serve_copia:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+                copiati.append(rel)
+        except Exception as e:
+            errori.append({"file": rel, "azione": "copia", "errore": str(e)})
+
+    # 2) Specchio esatto: cancella dal NAS i file (di codice app) non più in locale.
+    #    _elenca_file_app già esclude database/ e affini, quindi i DATI non compaiono qui.
+    for rel in remoti.keys():
+        if rel in locali:
+            continue
+        dst = os.path.join(APP_DIR_REMOTA, rel)
+        try:
+            os.remove(dst)
+            cancellati.append(rel)
+        except Exception as e:
+            errori.append({"file": rel, "azione": "cancellazione", "errore": str(e)})
+
+    report = {
+        "backup_dir": backup_info,
+        "copiati": copiati,
+        "cancellati": cancellati,
+        "errori": errori,
+        "n_copiati": len(copiati),
+        "n_cancellati": len(cancellati),
+        "n_errori": len(errori)
+    }
+    return (len(errori) == 0), report
+
 # Funzione per recuperare il nome del file JSON
 def get_json_filepath(username: str, utility: str, is_manual: bool):
     if username not in UTENTI_CONFIG:
@@ -135,73 +371,6 @@ def get_json_filepath(username: str, utility: str, is_manual: bool):
     suffix = "_man" if is_manual else ""
     filename = f"{prefix}{suffix}_{utility.lower()}.json"
     return os.path.join(DB_DIR_LOCALE, filename)
-
-# Estrattore euristico di fallback tramite Regex
-def parse_pdf_heuristics(text: str, utility_type: str):
-    result = {
-        "data": None,
-        "periodo_inizio": None,
-        "periodo_fine": None,
-        "consumo_fatturato": None,
-        "fattura": None,
-        "lettura_totale": None,
-        "lettura": None,
-        "lettura_f1": 0,
-        "lettura_f2": 0,
-        "lettura_f3": 0
-    }
-
-    # 1. Ricerca date (DD/MM/YYYY o DD-MM-YYYY)
-    date_matches = re.findall(r'\b(\d{2})[/-](\d{2})[/-](\d{4})\b', text)
-    dates = []
-    for m in date_matches:
-        try:
-            d_str = f"{m[2]}-{m[1]}-{m[0]}"
-            datetime.strptime(d_str, "%Y-%m-%d")
-            dates.append(d_str)
-        except ValueError:
-            pass
-    if dates:
-        dates.sort()
-        # Spesso l'ultima data nel testo corrisponde alla fine periodo o scadenza bolletta
-        result["data"] = dates[-1]
-        # Euristica grezza del periodo di fatturazione: prima e ultima data trovate.
-        # Indicativa, va sempre verificata a mano (la stima affidabile la fa Gemini).
-        if len(dates) >= 2:
-            result["periodo_inizio"] = dates[0]
-            result["periodo_fine"] = dates[-1]
-        
-    # 2. Ricerca Importo (es: 120,40 € o € 120,40 o Totale 120,40)
-    clean_text = re.sub(r'\s+', ' ', text)
-    money_patterns = [
-        r'(?:totale da pagare|totale bolletta|totale fattura|importo da pagare|totale a pagare|totale)\s*(?:di)?\s*€?\s*(\d+[\.,]\d{2})\b',
-        r'€\s*(\d+[\.,]\d{2})\b',
-        r'\b(\d+[\.,]\d{2})\s*€'
-    ]
-    found_amounts = []
-    for pat in money_patterns:
-        matches = re.findall(pat, clean_text, re.IGNORECASE)
-        for m in matches:
-            try:
-                val = float(m.replace('.', '').replace(',', '.'))
-                if 2.0 < val < 5000.0: # Esclude valori irrisori o spropositati
-                    found_amounts.append(val)
-            except ValueError:
-                pass
-    if found_amounts:
-        result["fattura"] = found_amounts[0]
-        
-    # 3. Ricerca Letture
-    reading_matches = re.findall(r'\b(\d+)\s*(?:kwh|smc|mc|m³|m3)\b', clean_text, re.IGNORECASE)
-    if reading_matches:
-        vals = [int(x) for x in reading_matches if len(x) < 7] # evita codici POD/PDR
-        if vals:
-            if utility_type.upper() == "LUCE":
-                result["lettura_totale"] = max(vals)
-            else:
-                result["lettura"] = max(vals)
-                
-    return result
 
 # Chiamata a Gemini per il parsing avanzato
 def parse_pdf_gemini(text: str, utility_type: str):
@@ -388,20 +557,24 @@ async def api_parse_pdf(request: Request):
             
             if not text_full.strip():
                 return JSONResponse({"error": "Impossibile estrarre testo dal PDF. Il file potrebbe essere una scansione immagine non leggibile."}, status_code=400)
-                
-            # Tentiamo il parsing con Gemini AI
-            parsed_data = None
-            if API_KEY_GEMINI:
-                parsed_data = parse_pdf_gemini(text_full, utility)
-                
-            # Se Gemini non è disponibile o fallisce, usiamo l'euristica Regex locale
+
+            # L'estrazione dati avviene SOLO tramite Gemini. Se non è disponibile
+            # (chiave assente o nessuna connessione a Gemini) non usiamo alcun
+            # fallback: meglio nessun dato che dati estratti in modo inaffidabile.
+            if not API_KEY_GEMINI:
+                return JSONResponse({
+                    "error": "gemini_non_disponibile",
+                    "message": "Estrazione automatica non disponibile: chiave Gemini non configurata."
+                }, status_code=503)
+
+            parsed_data = parse_pdf_gemini(text_full, utility)
             if not parsed_data:
-                print("Esecuzione parser euristico di fallback...")
-                parsed_data = parse_pdf_heuristics(text_full, utility)
-                parsed_data["parsed_via"] = "heuristics"
-            else:
-                parsed_data["parsed_via"] = "gemini"
-                
+                return JSONResponse({
+                    "error": "gemini_non_disponibile",
+                    "message": "Impossibile raggiungere Gemini per leggere la bolletta. Verifica la connessione a internet e riprova."
+                }, status_code=503)
+
+            parsed_data["parsed_via"] = "gemini"
             return JSONResponse(parsed_data)
             
         finally:
@@ -448,6 +621,32 @@ async def api_sync_resolve(request: Request):
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
+async def api_app_status(request: Request):
+    # Confronto del CODICE dell'applicazione locale vs NAS (sola lettura).
+    try:
+        richiede_attenzione, report = analizza_stato_applicazione()
+        return JSONResponse({
+            "success": True,
+            "richiede_attenzione": richiede_attenzione,
+            "report": report
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+async def api_app_publish(request: Request):
+    # Pubblica il codice dell'app sul NAS (specchio esatto da locale -> NAS).
+    # Operazione che SCRIVE/CANCELLA sul NAS: i dati (database/) non vengono toccati.
+    try:
+        success, report = pubblica_app_su_nas()
+        return JSONResponse({
+            "success": success,
+            "report": report
+        }, status_code=(200 if success else 409))
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 # Rotte API dell'applicazione
 routes = [
     Route("/api/login", api_login, methods=["POST"]),
@@ -457,6 +656,8 @@ routes = [
     Route("/api/parse-pdf", api_parse_pdf, methods=["POST"]),
     Route("/api/sync/status", api_sync_status, methods=["GET"]),
     Route("/api/sync/resolve", api_sync_resolve, methods=["POST"]),
+    Route("/api/app/status", api_app_status, methods=["GET"]),
+    Route("/api/app/publish", api_app_publish, methods=["POST"]),
     # Serviamo i file PDF archiviati
     Mount("/database/pdfs", StaticFiles(directory=PDF_DIR), name="pdfs"),
     # Serviamo il frontend statico
