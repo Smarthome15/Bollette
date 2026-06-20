@@ -12,7 +12,8 @@ const state = {
     charts: {
         spese: null,
         consumi: null,
-        audit: null
+        audit: null,
+        prezzi: null
     },
     activeTab: "tab-dashboard",
     dashboardYear: null, // anno selezionato nella dashboard (null = anno corrente)
@@ -259,6 +260,15 @@ function initEventListeners() {
         renderDashboard();
     });
 
+    // Tab Andamento Prezzi: selettore utenza e soglia di segnalazione
+    document.getElementById("prezzi-utility-select").addEventListener("change", renderPrezziTab);
+    document.getElementById("prezzi-soglia").addEventListener("input", renderPrezziTab);
+
+    // Avviso nella pagina Anomalie → porta alla tab Andamento Prezzi
+    document.getElementById("audit-prezzi-alert").addEventListener("click", () => {
+        switchTab("tab-prezzi");
+    });
+
     // Backup & Restore
     document.getElementById("btn-export-backup").addEventListener("click", exportBackup);
     document.getElementById("btn-trigger-import").addEventListener("click", () => {
@@ -320,6 +330,8 @@ function switchTab(tabId) {
         renderReadingsTable();
     } else if (tabId === "tab-verifica") {
         renderAuditTab();
+    } else if (tabId === "tab-prezzi") {
+        renderPrezziTab();
     }
 }
 
@@ -730,6 +742,10 @@ function prefillBillForm(data) {
     if (data.periodo_fine) document.getElementById("bill-periodo-fine").value = data.periodo_fine;
     if (data.consumo_fatturato != null) document.getElementById("bill-consumo-fatturato").value = data.consumo_fatturato;
     if (data.fattura) document.getElementById("bill-amount").value = data.fattura;
+    // Scomposizione costi (per Andamento Prezzi): guard != null così uno 0 valido passa.
+    if (data.quota_fissa != null) document.getElementById("bill-quota-fissa").value = data.quota_fissa;
+    if (data.quota_energia != null) document.getElementById("bill-quota-energia").value = data.quota_energia;
+    if (data.prezzo_unitario_energia != null) document.getElementById("bill-prezzo-unitario-energia").value = data.prezzo_unitario_energia;
 
     const utility = document.getElementById("bill-utility").value;
     if (utility === "LUCE") {
@@ -796,6 +812,12 @@ async function saveNewBill(e) {
     const consumoFatturatoRaw = document.getElementById("bill-consumo-fatturato").value;
     const consumoFatturato = consumoFatturatoRaw !== "" ? parseFloat(consumoFatturatoRaw) : null;
 
+    // Scomposizione costi (opzionale, usata dall'analisi Andamento Prezzi).
+    // Campo vuoto → null (= dato non disponibile, lo storico ne è privo).
+    const quotaFissaRaw = document.getElementById("bill-quota-fissa").value;
+    const quotaEnergiaRaw = document.getElementById("bill-quota-energia").value;
+    const prezzoUnitarioRaw = document.getElementById("bill-prezzo-unitario-energia").value;
+
     // Costruisci record
     const record = {
         data: date,
@@ -805,7 +827,10 @@ async function saveNewBill(e) {
         fattura: amount,
         pdf_path: pdfPath,
         tipo_lettura: billType, // Stimata, Rilevata, Mista
-        note: notes
+        note: notes,
+        quota_fissa: quotaFissaRaw !== "" ? parseFloat(quotaFissaRaw) : null,
+        quota_energia: quotaEnergiaRaw !== "" ? parseFloat(quotaEnergiaRaw) : null,
+        prezzo_unitario_energia: prezzoUnitarioRaw !== "" ? parseFloat(prezzoUnitarioRaw) : null
     };
 
     if (utility === "LUCE") {
@@ -1392,6 +1417,9 @@ function openPdfModal(url, title, bill) {
         <div class="details-row"><span class="details-label">Lettura Totale</span><span class="details-val">${reading}</span></div>
         ${specificContent}
         <div class="details-row"><span class="details-label">Tipo Rilevazione</span><span class="details-val text-capitalize">${bill.tipo_lettura || 'Non specificata'}</span></div>
+        <div class="details-row"><span class="details-label">Quota Fissa</span><span class="details-val">${bill.quota_fissa != null ? "€ " + bill.quota_fissa.toFixed(2) : "n/d"}</span></div>
+        <div class="details-row"><span class="details-label">Quota Energia</span><span class="details-val">${bill.quota_energia != null ? "€ " + bill.quota_energia.toFixed(2) : "n/d"}</span></div>
+        <div class="details-row"><span class="details-label">Prezzo Unitario</span><span class="details-val">${bill.prezzo_unitario_energia != null ? "€ " + bill.prezzo_unitario_energia.toFixed(4) + "/" + unitForUtility(bill.utility) : "n/d"}</span></div>
         <div class="details-row" style="flex-direction:column; border:none; gap:6px;">
             <span class="details-label">Note bolletta:</span>
             <p style="background:rgba(255,255,255,0.03); padding:10px; border-radius:var(--radius-sm); font-size:0.85rem; border:1px solid var(--border-glass);">${bill.note || "Nessuna nota aggiuntiva."}</p>
@@ -1576,6 +1604,20 @@ function renderAuditTab() {
 
     // Disegna il confronto consumo fatturato vs rilevato per periodo.
     renderAuditTimelineChart(utility, reportEntries.length ? bills : [], readings);
+
+    // Avviso variazioni prezzo/consumo (tutte le utenze) → rimanda alla tab Andamento Prezzi.
+    const alertEl = document.getElementById("audit-prezzi-alert");
+    if (alertEl) {
+        const n = contaSegnalazioniPrezzi(getPrezziSoglia());
+        if (n > 0) {
+            document.getElementById("audit-prezzi-alert-text").textContent =
+                `Ci sono ${n} variazion${n === 1 ? "e" : "i"} di prezzo o consumo da controllare`;
+            alertEl.classList.remove("hidden");
+            lucide.createIcons();
+        } else {
+            alertEl.classList.add("hidden");
+        }
+    }
 }
 
 function updateAuditCounters(ok, over, under, na) {
@@ -1640,6 +1682,151 @@ function renderAuditTimelineChart(utility, bills, readings) {
             scales: {
                 x: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
                 y: { beginAtZero: true, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } }
+            },
+            plugins: {
+                legend: { labels: { color: "#f8fafc" } }
+            }
+        }
+    });
+}
+
+// --- ANDAMENTO PREZZI: variazioni tra bollette consecutive ---
+// Considera SOLO le bollette con dati di dettaglio reali (prezzo_unitario_energia
+// presente), come da scelta: niente stime sullo storico. Restituisce la lista
+// ordinata cronologicamente con prezzo unitario, consumo e variazioni % vs la
+// bolletta precedente della stessa utenza. 'soglia' è una frazione (0.15 = 15%).
+function computePrezziVariazioni(utility, soglia) {
+    const bills = (state.data.bills[utility] || [])
+        .slice()
+        .filter(b => b && typeof b.prezzo_unitario_energia === "number" && isFinite(b.prezzo_unitario_energia) && b.prezzo_unitario_energia > 0)
+        .sort((a, b) => a.data.localeCompare(b.data));
+
+    const out = [];
+    for (let i = 0; i < bills.length; i++) {
+        const b = bills[i];
+        const prezzo = b.prezzo_unitario_energia;
+        const consumo = (typeof b.consumo_fatturato === "number" && isFinite(b.consumo_fatturato)) ? b.consumo_fatturato : null;
+        const prev = i > 0 ? bills[i - 1] : null;
+
+        let varPrezzo = null, varConsumo = null;
+        if (prev && prev.prezzo_unitario_energia > 0) {
+            varPrezzo = (prezzo - prev.prezzo_unitario_energia) / prev.prezzo_unitario_energia;
+        }
+        if (prev && typeof prev.consumo_fatturato === "number" && prev.consumo_fatturato > 0 && consumo != null) {
+            varConsumo = (consumo - prev.consumo_fatturato) / prev.consumo_fatturato;
+        }
+        const segnalaPrezzo = varPrezzo != null && Math.abs(varPrezzo) >= soglia;
+        const segnalaConsumo = varConsumo != null && Math.abs(varConsumo) >= soglia;
+
+        out.push({ bill: b, prezzo, consumo, varPrezzo, varConsumo, segnalaPrezzo, segnalaConsumo });
+    }
+    return out;
+}
+
+// Legge la soglia dall'input (in %), con fallback a 15%. Restituisce una frazione.
+function getPrezziSoglia() {
+    const el = document.getElementById("prezzi-soglia");
+    const v = el ? parseFloat(el.value) : NaN;
+    return (isFinite(v) && v > 0) ? v / 100 : 0.15;
+}
+
+// Conta, su tutte le utenze, quante variazioni superano la soglia: usato dal badge
+// nella pagina Verifica Anomalie per rimandare qui.
+function contaSegnalazioniPrezzi(soglia) {
+    let n = 0;
+    ["LUCE", "GAS", "ACQUA"].forEach(ut => {
+        computePrezziVariazioni(ut, soglia).forEach(r => {
+            if (r.segnalaPrezzo || r.segnalaConsumo) n++;
+        });
+    });
+    return n;
+}
+
+function renderPrezziTab() {
+    if (state.activeTab !== "tab-prezzi") return;
+
+    const utility = document.getElementById("prezzi-utility-select").value;
+    const soglia = getPrezziSoglia();
+    const unit = unitForUtility(utility);
+    const rows = computePrezziVariazioni(utility, soglia);
+
+    const tbody = document.getElementById("table-prezzi-body");
+    tbody.innerHTML = "";
+
+    if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-secondary); padding:20px;">Nessuna bolletta con dati di dettaglio costi per questa utenza. Carica una bolletta PDF: il prezzo unitario verrà estratto automaticamente e comparirà qui.</td></tr>`;
+        renderPrezziChart(utility, []);
+        return;
+    }
+
+    // Mostra in ordine decrescente di data (più recenti in alto).
+    rows.slice().sort((a, b) => b.bill.data.localeCompare(a.bill.data)).forEach(r => {
+        const periodoText = (r.bill.periodo_inizio || r.bill.periodo_fine)
+            ? `${r.bill.periodo_inizio ? formatDate(r.bill.periodo_inizio) : "?"} → ${r.bill.periodo_fine ? formatDate(r.bill.periodo_fine) : "?"}`
+            : "Non indicato";
+
+        const fmtVar = (v, segnala) => {
+            if (v == null) return `<span class="text-secondary">—</span>`;
+            const segno = v > 0 ? "+" : "";
+            const cls = segnala ? (v > 0 ? "text-danger font-medium" : "text-success font-medium") : "text-secondary";
+            return `<span class="${cls}">${segno}${Math.round(v * 100)}%</span>`;
+        };
+
+        // Segnalazione testuale.
+        const note = [];
+        if (r.segnalaPrezzo) note.push(r.varPrezzo > 0 ? "⚠️ Prezzo in aumento" : "Prezzo in calo");
+        if (r.segnalaConsumo) note.push(r.varConsumo > 0 ? "⚠️ Consumo in aumento" : "Consumo in calo");
+        const segnalazione = note.length
+            ? `<span class="badge ${r.varPrezzo > 0 && r.segnalaPrezzo ? "badge-danger" : "badge-warning"}">${note.join(" · ")}</span>`
+            : `<span class="badge badge-success">Stabile</span>`;
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+            <td>${formatDate(r.bill.data)}</td>
+            <td style="font-size:0.85rem;">${periodoText}</td>
+            <td class="font-medium">€ ${r.prezzo.toFixed(4)}/${unit}</td>
+            <td>${fmtVar(r.varPrezzo, r.segnalaPrezzo)}</td>
+            <td>${r.consumo != null ? r.consumo + " " + unit : "—"}</td>
+            <td>${fmtVar(r.varConsumo, r.segnalaConsumo)}</td>
+            <td>${segnalazione}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    renderPrezziChart(utility, rows);
+}
+
+// Grafico a linea dell'andamento del prezzo unitario nel tempo.
+function renderPrezziChart(utility, rows) {
+    const ctx = document.getElementById("chart-prezzi").getContext("2d");
+    if (state.charts.prezzi) state.charts.prezzi.destroy();
+
+    const unit = unitForUtility(utility);
+    const labels = rows.map(r => formatDate(r.bill.periodo_fine || r.bill.data));
+    const dataset = rows.map(r => r.prezzo);
+
+    state.charts.prezzi = new Chart(ctx, {
+        type: "line",
+        data: {
+            labels: labels,
+            datasets: [{
+                label: `Prezzo Unitario (€/${unit})`,
+                data: dataset,
+                borderColor: "#f59e0b",
+                backgroundColor: "rgba(245, 158, 11, 0.15)",
+                borderWidth: 2,
+                tension: 0.25,
+                fill: true,
+                pointRadius: 4,
+                pointBackgroundColor: "#f59e0b"
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
+                y: { beginAtZero: false, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } }
             },
             plugins: {
                 legend: { labels: { color: "#f8fafc" } }

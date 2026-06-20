@@ -390,6 +390,9 @@ def parse_pdf_gemini(text: str, utility_type: str):
         - periodo_fine: la data di FINE del periodo di fatturazione/consumo indicato in bolletta (formato YYYY-MM-DD, null se assente).
         - consumo_fatturato: il consumo del periodo DICHIARATO nella bolletta (numero, nell'unità dell'utenza: kWh per la luce, Smc per il gas, m³ per l'acqua). È il consumo del periodo, NON la lettura del contatore. Metti null se non indicato.
         - fattura: l'importo totale da pagare in Euro (numero decimale). Se non c'è importo o è solo una comunicazione, metti null.
+        - quota_fissa: la somma delle quote FISSE del periodo in Euro (numero decimale: es. quota fissa di vendita + trasporto/gestione contatore, indipendenti dal consumo). null se non scorporabile.
+        - quota_energia: la spesa per la materia/energia effettivamente CONSUMATA nel periodo in Euro (numero decimale), esclusa la quota fissa. null se non indicata.
+        - prezzo_unitario_energia: il prezzo unitario della materia consumata, in EUR per unità (EUR/kWh per LUCE, EUR/Smc per GAS, EUR/m³ per ACQUA). Numero decimale con più cifre (es. 0.1234). null se non indicato.
         """
         if utility_type.upper() == "LUCE":
             prompt += """
