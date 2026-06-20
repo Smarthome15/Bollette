@@ -15,6 +15,7 @@ const state = {
         audit: null
     },
     activeTab: "tab-dashboard",
+    dashboardYear: null, // anno selezionato nella dashboard (null = anno corrente)
     currentBillFilter: "all",
     currentReadingFilter: "all",
     tempPdfFile: null // File temporaneo caricato durante l'inserimento bolletta
@@ -250,6 +251,12 @@ function initEventListeners() {
     // Utenza select in Verifica
     document.getElementById("audit-utility-select").addEventListener("change", () => {
         renderAuditTab();
+    });
+
+    // Selettore anno nella Dashboard
+    document.getElementById("dashboard-year-select").addEventListener("change", (e) => {
+        state.dashboardYear = parseInt(e.target.value, 10);
+        renderDashboard();
     });
 
     // Backup & Restore
@@ -490,7 +497,10 @@ async function loadData() {
     renderDashboard();
 }
 
-async function saveUtilityData(utility, dataType) {
+// recordModificato (opzionale): il record appena inserito/modificato. Serve al ramo
+// offline per accodare in "pending" la lettura GIUSTA anche quando è arretrata (dopo il
+// sort non sarebbe l'ultimo dell'array). Se omesso, si ricade sull'ultimo per data.
+async function saveUtilityData(utility, dataType, recordModificato) {
     if (!state.user) return;
     const isManual = (dataType === "manual");
     const records = isManual ? state.data.readings[utility] : state.data.bills[utility];
@@ -523,8 +533,10 @@ async function saveUtilityData(utility, dataType) {
     } catch (err) {
         console.error("Errore nel salvataggio dei dati remoti:", err);
         if (isManual) {
-            // Se stiamo salvando un'autolettura e il server è offline, la salviamo localmente come "pending"
-            savePendingReadingOffline(utility, records[records.length - 1]);
+            // Se stiamo salvando un'autolettura e il server è offline, la salviamo localmente come "pending".
+            // Usa il record appena inserito se fornito (corretto anche per letture arretrate),
+            // altrimenti ricade sull'ultimo per data.
+            savePendingReadingOffline(utility, recordModificato || records[records.length - 1]);
             alert("Il server backend Python è offline. La lettura è stata salvata localmente nel browser del telefono e verrà caricata sul NAS automaticamente non appena riavvierai il server Python sul tuo PC!");
             loadData();
         } else {
@@ -838,13 +850,48 @@ async function saveNewReading(e) {
         record.lettura_f2 = f2;
         record.lettura_f3 = f3;
         record.lettura_totale = parseInt(document.getElementById("read-value").value) || (f1 + f2 + f3);
+
+        // GUARDIA 1: il totale digitato a mano diverge dalla somma delle fasce.
+        if (record.lettura_totale !== f1 + f2 + f3) {
+            if (!confirm(`Il Totale inserito (${record.lettura_totale}) non corrisponde alla somma delle fasce F1+F2+F3 (${f1 + f2 + f3}).\n\nVuoi salvare comunque con questo totale?`)) {
+                return;
+            }
+        }
     } else {
         record.lettura = parseInt(document.getElementById("read-value").value) || 0;
     }
 
-    state.data.readings[utility].push(record);
-    await saveUtilityData(utility, "manual");
-    
+    const nuovoValore = readingValue(record);
+
+    // GUARDIA 2: esiste già una lettura per questa stessa data → propongo la sostituzione
+    // (altrimenti si creerebbe una riga doppia per lo stesso mese, in silenzio).
+    const idxStessaData = state.data.readings[utility].findIndex(x => x.data === date);
+    if (idxStessaData !== -1) {
+        if (!confirm(`Esiste già un'autolettura per il ${formatDate(date)}.\n\nVuoi SOSTITUIRLA con questo nuovo valore?`)) {
+            return;
+        }
+    }
+
+    // GUARDIA 3: lettura non crescente rispetto all'ultima precedente a questa data.
+    // Il contatore è progressivo: un valore più basso è quasi sempre un errore di battitura.
+    const precedenti = state.data.readings[utility]
+        .filter(x => x.data < date)
+        .sort((a, b) => a.data.localeCompare(b.data));
+    const ultimaPrec = precedenti.length ? precedenti[precedenti.length - 1] : null;
+    if (ultimaPrec && nuovoValore < readingValue(ultimaPrec)) {
+        if (!confirm(`Attenzione: il valore inserito (${nuovoValore}) è MINORE dell'ultima lettura del ${formatDate(ultimaPrec.data)} (${readingValue(ultimaPrec)}).\n\nIl contatore di norma cresce sempre. Salvare comunque?`)) {
+            return;
+        }
+    }
+
+    // Applica: sostituisce la lettura della stessa data se confermato, altrimenti aggiunge.
+    if (idxStessaData !== -1) {
+        state.data.readings[utility][idxStessaData] = record;
+    } else {
+        state.data.readings[utility].push(record);
+    }
+    await saveUtilityData(utility, "manual", record);
+
     document.getElementById("form-lettura").reset();
     toggleUtilityFields("LUCE", "read");
 }
@@ -863,64 +910,124 @@ async function deleteReading(utility, index) {
 
 // --- CODICE RENDERIZZAZIONE INTERFACCIA (TAB) ---
 
+// Restituisce, in ordine decrescente, gli anni per cui esistono bollette o letture.
+function getAnniConDati() {
+    const anni = new Set();
+    ["bills", "readings"].forEach(tipo => {
+        Object.keys(state.data[tipo]).forEach(ut => {
+            state.data[tipo][ut].forEach(r => {
+                const y = monthKey(r.data);
+                if (y) anni.add(parseInt(y.slice(0, 4), 10));
+            });
+        });
+    });
+    return Array.from(anni).sort((a, b) => b - a);
+}
+
+// Popola il <select> dell'anno con gli anni che hanno dati e imposta state.dashboardYear.
+// Default: anno in corso se presente tra i dati, altrimenti il più recente con dati.
+function popolaSelettoreAnni() {
+    const sel = document.getElementById("dashboard-year-select");
+    if (!sel) return;
+    const anni = getAnniConDati();
+    const annoCorrente = new Date().getFullYear();
+
+    // Determina l'anno attivo, mantenendo la scelta dell'utente se ancora valida.
+    let attivo = state.dashboardYear;
+    if (anni.length === 0) {
+        attivo = annoCorrente;
+    } else if (attivo == null || !anni.includes(attivo)) {
+        attivo = anni.includes(annoCorrente) ? annoCorrente : anni[0];
+    }
+    state.dashboardYear = attivo;
+
+    const opzioni = anni.length ? anni : [annoCorrente];
+    sel.innerHTML = opzioni.map(y =>
+        `<option value="${y}" ${y === attivo ? "selected" : ""}>${y}${y === annoCorrente ? " (in corso)" : ""}</option>`
+    ).join("");
+}
+
 // DASHBOARD RENDER
 function renderDashboard() {
     if (state.activeTab !== "tab-dashboard") return;
-    
+
     const bills = state.data.bills;
     const readings = state.data.readings;
-    
-    // 1. Calcola Spesa Totale Anno Corrente
-    const currentYear = new Date().getFullYear();
-    let totalSpentThisYear = 0;
-    let totalSpentLastYear = 0;
-    
+
+    // Selettore anno: popola le opzioni e fissa l'anno attivo (default = anno in corso).
+    popolaSelettoreAnni();
+    const selectedYear = state.dashboardYear;
+    const annoCorrente = new Date().getFullYear();
+    const isAnnoInCorso = (selectedYear === annoCorrente);
+
+    // 1. Spesa Totale dell'ANNO SELEZIONATO (valore KPI = intero anno selezionato).
+    // TREND a confronto con l'anno precedente:
+    //  - anno in corso → confronto a PARI PERIODO (gen→mese corrente vs stessi mesi anno prima);
+    //  - anno passato (completo) → confronto sull'intero anno vs intero anno precedente.
+    const currentMonth = new Date().getMonth() + 1; // 1..12
+    const meseLimite = isAnnoInCorso ? currentMonth : 12;
+    let totalSpentSelected = 0;     // intero anno selezionato (per il valore KPI)
+    let cmpSelected = 0;            // anno selezionato, fino a meseLimite
+    let cmpPrev = 0;               // anno precedente, fino a meseLimite
+
     Object.keys(bills).forEach(ut => {
         bills[ut].forEach(b => {
             if (!b.fattura) return;
             const bYear = new Date(b.data).getFullYear();
-            if (bYear === currentYear) {
-                totalSpentThisYear += b.fattura;
-            } else if (bYear === currentYear - 1) {
-                totalSpentLastYear += b.fattura;
+            const bMonth = new Date(b.data).getMonth() + 1;
+            if (bYear === selectedYear) {
+                totalSpentSelected += b.fattura;
+                if (bMonth <= meseLimite) cmpSelected += b.fattura;
+            } else if (bYear === selectedYear - 1) {
+                if (bMonth <= meseLimite) cmpPrev += b.fattura;
             }
         });
     });
 
-    document.getElementById("kpi-spesa-totale").textContent = `€ ${totalSpentThisYear.toFixed(2)}`;
-    
+    document.getElementById("kpi-spesa-totale-title").textContent = `Spesa Totale ${selectedYear}`;
+    document.getElementById("kpi-spesa-totale").textContent = `€ ${totalSpentSelected.toFixed(2)}`;
+
     const trendEl = document.getElementById("kpi-spesa-trend");
-    if (totalSpentLastYear > 0) {
-        const pctDiff = ((totalSpentThisYear - totalSpentLastYear) / totalSpentLastYear) * 100;
-        if (pctDiff > 0) {
-            trendEl.className = "kpi-trend up";
-            trendEl.innerHTML = `<i data-lucide="trending-up" style="display:inline-block; width:12px; height:12px;"></i> +${pctDiff.toFixed(1)}% rispetto all'anno scorso`;
-        } else {
-            trendEl.className = "kpi-trend down";
-            trendEl.innerHTML = `<i data-lucide="trending-down" style="display:inline-block; width:12px; height:12px;"></i> ${pctDiff.toFixed(1)}% rispetto all'anno scorso`;
-        }
+    if (cmpPrev > 0) {
+        const pctDiff = ((cmpSelected - cmpPrev) / cmpPrev) * 100;
+        const segno = pctDiff > 0 ? "+" : "";
+        const icona = pctDiff > 0 ? "trending-up" : "trending-down";
+        const testoPeriodo = isAnnoInCorso ? "vs stesso periodo anno scorso" : `vs ${selectedYear - 1}`;
+        trendEl.className = pctDiff > 0 ? "kpi-trend up" : "kpi-trend down";
+        trendEl.innerHTML = `<i data-lucide="${icona}" style="display:inline-block; width:12px; height:12px;"></i> ${segno}${pctDiff.toFixed(1)}% ${testoPeriodo}`;
     } else {
         trendEl.className = "kpi-trend";
         trendEl.textContent = "Nessun dato storico precedente";
     }
 
-    // 2. Compila KPI specifici per Luce, Gas, Acqua
+    // 2. Compila KPI specifici per Luce, Gas, Acqua — riferiti all'ANNO SELEZIONATO:
+    //    mostra l'ULTIMA bolletta di quell'anno (e il relativo consumo).
     const updateKpi = (utility, kpiId, subId, unit) => {
-        const list = bills[utility].filter(x => x.fattura > 0);
+        const tutte = bills[utility].filter(x => x.fattura > 0);
+        const list = tutte.filter(x => new Date(x.data).getFullYear() === selectedYear);
         if (list.length > 0) {
             const last = list[list.length - 1];
             document.getElementById(kpiId).textContent = `€ ${last.fattura.toFixed(2)}`;
             const cons = last.lettura_totale !== undefined ? last.lettura_totale : (last.lettura || 0);
-            
-            // Calcolo del consumo parziale se presente un record precedente
-            let consumed = 0;
-            const idx = bills[utility].indexOf(last);
-            if (idx > 0) {
-                const prev = bills[utility][idx - 1];
-                const prevVal = prev.lettura_totale !== undefined ? prev.lettura_totale : (prev.lettura || 0);
-                consumed = cons - prevVal;
+
+            // Sotto-etichetta del consumo dell'ultima bolletta. Priorità:
+            //  1) consumo_fatturato dichiarato in bolletta → etichetta "(Fatturato)" (è davvero il fatturato);
+            //  2) altrimenti differenza tra letture progressive → etichetta "(stima da letture)";
+            //  3) altrimenti il valore progressivo del contatore → "(Totale contatore)".
+            if (typeof last.consumo_fatturato === "number" && isFinite(last.consumo_fatturato)) {
+                document.getElementById(subId).textContent = `${last.consumo_fatturato} ${unit} (Fatturato)`;
+            } else {
+                let consumed = 0;
+                const idx = bills[utility].indexOf(last);
+                if (idx > 0) {
+                    const prev = bills[utility][idx - 1];
+                    const prevVal = prev.lettura_totale !== undefined ? prev.lettura_totale : (prev.lettura || 0);
+                    consumed = cons - prevVal;
+                }
+                document.getElementById(subId).textContent = consumed > 0
+                    ? `${consumed} ${unit} (stima da letture)`
+                    : `${cons} ${unit} (Totale contatore)`;
             }
-            document.getElementById(subId).textContent = consumed > 0 ? `${consumed} ${unit} (Fatturato)` : `${cons} ${unit} (Totale)`;
         } else {
             document.getElementById(kpiId).textContent = "€ 0.00";
             document.getElementById(subId).textContent = `0 ${unit}`;
@@ -1000,6 +1107,7 @@ function renderDashboard() {
 // RENDER GRAFICI DASHBOARD
 function renderDashboardCharts() {
     const bills = state.data.bills;
+    const readings = state.data.readings;
     
     // Aggrega spese per mese/anno
     const speseMensili = {};
@@ -1007,12 +1115,11 @@ function renderDashboardCharts() {
     const consumiGas = {};
     const consumiAcqua = {};
     
-    // Inizializza gli ultimi 12 mesi
+    // Inizializza i 12 mesi (gen→dic) dell'ANNO SELEZIONATO nella dashboard.
+    const annoGrafico = state.dashboardYear || new Date().getFullYear();
     const labels = [];
-    const dateToday = new Date();
-    for (let i = 11; i >= 0; i--) {
-        const d = new Date(dateToday.getFullYear(), dateToday.getMonth() - i, 1);
-        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    for (let m = 1; m <= 12; m++) {
+        const key = `${annoGrafico}-${String(m).padStart(2, '0')}`;
         speseMensili[key] = { LUCE: 0, GAS: 0, ACQUA: 0 };
         labels.push(key);
     }
@@ -1027,11 +1134,15 @@ function renderDashboardCharts() {
         });
     });
 
-    // Label formattate (es: Gen 24)
+    // Label formattate (es: Gen, Feb, ...) — tutte dello stesso anno selezionato.
     const formattedLabels = labels.map(lbl => {
-        const [year, month] = lbl.split("-");
-        return `${MESI_IT_BREVE[parseInt(month) - 1]} ${year.substring(2)}`;
+        const month = lbl.split("-")[1];
+        return MESI_IT_BREVE[parseInt(month) - 1];
     });
+
+    // Titolo dinamico del grafico spese con l'anno selezionato.
+    const titoloSpese = document.getElementById("chart-spese-title");
+    if (titoloSpese) titoloSpese.textContent = `Andamento delle Spese Mensili ${annoGrafico} (€)`;
 
     const datasetLuce = labels.map(lbl => speseMensili[lbl].LUCE);
     const datasetGas = labels.map(lbl => speseMensili[lbl].GAS);
@@ -1064,27 +1175,53 @@ function renderDashboardCharts() {
         }
     });
 
-    // --- GRAFICO CONSUMI (LINE CHART ANNUALE) ---
-    // Calcoliamo consumi per anno solare per utenza
+    // --- GRAFICO CONSUMI (ANNUALE) ---
+    // Consumo "rilevato" per anno solare: si calcola dalle AUTOLETTURE mensili
+    // (state.data.readings), non dalle bollette sparse, coerentemente col titolo
+    // "Rilevato" e col principio del progetto (consumo = differenza tra letture).
+    // Ogni intervallo tra due letture consecutive viene ripartito PRO-RATA sui
+    // giorni effettivi, così un intervallo a cavallo d'anno (o con buchi) finisce
+    // negli anni giusti invece di essere attribuito tutto all'anno della lettura finale.
     const years = [currentYear() - 2, currentYear() - 1, currentYear()];
     const consLuceAnnuo = [0, 0, 0];
     const consGasAnnuo = [0, 0, 0];
     const consAcquaAnnuo = [0, 0, 0];
 
+    const MS_GIORNO = 24 * 60 * 60 * 1000;
+
     const calcolaConsumoAnnuo = (utility, arrayDest) => {
-        const list = bills[utility];
-        list.forEach((b, idx) => {
-            const bYear = new Date(b.data).getFullYear();
-            const yearIdx = years.indexOf(bYear);
-            if (yearIdx !== -1 && idx > 0) {
-                const val = b.lettura_totale !== undefined ? b.lettura_totale : (b.lettura || 0);
-                const prev = list[idx - 1].lettura_totale !== undefined ? list[idx - 1].lettura_totale : (list[idx - 1].lettura || 0);
-                const diff = val - prev;
-                if (diff > 0) {
-                    arrayDest[yearIdx] += diff;
+        const list = (readings[utility] || [])
+            .slice()
+            .sort((a, b) => a.data.localeCompare(b.data));
+        for (let idx = 1; idx < list.length; idx++) {
+            const recPrev = list[idx - 1];
+            const recCur = list[idx];
+            const val = recCur.lettura_totale !== undefined ? recCur.lettura_totale : (recCur.lettura || 0);
+            const prev = recPrev.lettura_totale !== undefined ? recPrev.lettura_totale : (recPrev.lettura || 0);
+            const diff = val - prev;
+            if (diff <= 0) continue; // azzeramenti/incoerenze: ignorati
+
+            const dStart = new Date(recPrev.data);
+            const dEnd = new Date(recCur.data);
+            const giorniTot = Math.round((dEnd - dStart) / MS_GIORNO);
+            if (giorniTot <= 0) continue;
+
+            // Ripartisci il diff sui giorni di ciascun anno coperto dall'intervallo.
+            years.forEach((anno, yearIdx) => {
+                const inizioAnno = new Date(anno, 0, 1);
+                const fineAnno = new Date(anno + 1, 0, 1);
+                const overlapStart = dStart > inizioAnno ? dStart : inizioAnno;
+                const overlapEnd = dEnd < fineAnno ? dEnd : fineAnno;
+                const giorniNelAnno = Math.round((overlapEnd - overlapStart) / MS_GIORNO);
+                if (giorniNelAnno > 0) {
+                    arrayDest[yearIdx] += diff * (giorniNelAnno / giorniTot);
                 }
-            }
-        });
+            });
+        }
+        // Arrotonda a interi per leggibilità (i consumi sono kWh/SMC/m³).
+        for (let i = 0; i < arrayDest.length; i++) {
+            arrayDest[i] = Math.round(arrayDest[i]);
+        }
     };
 
     calcolaConsumoAnnuo("LUCE", consLuceAnnuo);
@@ -1535,41 +1672,117 @@ function exportBackup() {
     URL.revokeObjectURL(url);
 }
 
+// Valida la forma di un bundle di backup e lo normalizza a una struttura sicura
+// { LUCE:{bills:[],readings:[]}, GAS:{...}, ACQUA:{...} } senza toccare state.data.
+// Lancia un Error con messaggio leggibile se il bundle è inutilizzabile.
+function validaBundleBackup(bundle) {
+    if (!bundle || typeof bundle !== "object") {
+        throw new Error("File non valido o vuoto.");
+    }
+    if (bundle.app !== "ConsumiCasa") {
+        throw new Error("File JSON di backup non compatibile con questa applicazione.");
+    }
+    // La struttura di state.data (e quindi del bundle) è:
+    //   data: { bills: {LUCE,GAS,ACQUA}, readings: {LUCE,GAS,ACQUA} }
+    if (!bundle.data || typeof bundle.data !== "object" ||
+        typeof bundle.data.bills !== "object" || typeof bundle.data.readings !== "object") {
+        throw new Error("Il backup non contiene la sezione dati attesa (bills/readings).");
+    }
+
+    const utilities = ["LUCE", "GAS", "ACQUA"];
+    const pulito = {};
+    const recordValido = (r) => r && typeof r === "object" && typeof r.data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.data);
+
+    utilities.forEach(ut => {
+        const bills = Array.isArray(bundle.data.bills[ut]) ? bundle.data.bills[ut] : [];
+        const readings = Array.isArray(bundle.data.readings[ut]) ? bundle.data.readings[ut] : [];
+        // Ogni record deve avere una data valida: altrimenti il salvataggio (che ordina
+        // per data) si romperebbe. Se ne trovo di malformati, blocco prima di scrivere.
+        const billMal = bills.filter(r => !recordValido(r)).length;
+        const readMal = readings.filter(r => !recordValido(r)).length;
+        if (billMal > 0 || readMal > 0) {
+            throw new Error(`Dati ${ut} corrotti nel backup (${billMal} bollette e ${readMal} letture senza data valida). Importazione annullata.`);
+        }
+        pulito[ut] = { bills, readings };
+    });
+    return pulito;
+}
+
 async function importBackup(e) {
-    const file = e.target.files[0];
+    const fileInput = e.target;
+    const file = fileInput.files[0];
     const statusText = document.getElementById("import-status-text");
-    
+
     if (!file) return;
     statusText.style.color = "var(--text-secondary)";
     statusText.textContent = "Analisi file...";
-    
+
     const reader = new FileReader();
     reader.onload = async (event) => {
         try {
             const bundle = JSON.parse(event.target.result);
-            if (bundle.app !== "ConsumiCasa" || !bundle.data) {
-                throw new Error("File JSON di backup non compatibile con questa applicazione.");
-            }
-            
-            // Ripristina nello stato
-            state.data = bundle.data;
-            
-            // Salva nel database (remoto o locale) per tutte le utenze del bundle
+
+            // 1) Valida e normalizza SENZA toccare state.data: se il bundle è
+            //    corrotto, qui lanciamo e non abbiamo modificato nulla.
+            const nuovo = validaBundleBackup(bundle);
+
+            // 2) Conta cosa si sta per importare e cosa verrebbe SOSTITUITO,
+            //    così l'utente sa esattamente cosa perde (l'import è una sostituzione totale).
+            //    NB: state.data ha forma {bills:{ut:[]}, readings:{ut:[]}}, mentre `nuovo`
+            //    (da validaBundleBackup) ha forma {ut:{bills:[],readings:[]}} — due conteggi distinti.
             const utilities = ["LUCE", "GAS", "ACQUA"];
+            const contaStato = (d) => utilities.reduce((acc, ut) => {
+                acc.bills += ((d && d.bills && d.bills[ut]) || []).length;
+                acc.readings += ((d && d.readings && d.readings[ut]) || []).length;
+                return acc;
+            }, { bills: 0, readings: 0 });
+            const contaNuovo = (n) => utilities.reduce((acc, ut) => {
+                acc.bills += ((n && n[ut] && n[ut].bills) || []).length;
+                acc.readings += ((n && n[ut] && n[ut].readings) || []).length;
+                return acc;
+            }, { bills: 0, readings: 0 });
+            const attuale = contaStato(state.data);
+            const inArrivo = contaNuovo(nuovo);
+
+            // 3) Conferma esplicita: l'import SOSTITUISCE i dati attuali (e li specchia sul NAS),
+            //    non li unisce. È irreversibile.
+            const msg =
+                "ATTENZIONE: l'importazione SOSTITUISCE tutti i dati attuali, non li unisce.\n\n" +
+                `Dati attuali (verranno cancellati): ${attuale.bills} bollette, ${attuale.readings} letture.\n` +
+                `Dal backup verranno caricati: ${inArrivo.bills} bollette, ${inArrivo.readings} letture.\n` +
+                (bundle.export_date ? `Backup del: ${bundle.export_date}\n` : "") +
+                "\nL'operazione è irreversibile" + (state.storageMode === "server" ? " e si applica anche al NAS." : ".") +
+                "\n\nProcedere?";
+            if (!confirm(msg)) {
+                statusText.style.color = "var(--text-secondary)";
+                statusText.textContent = "Importazione annullata.";
+                fileInput.value = ""; // permette di riselezionare lo stesso file
+                return;
+            }
+
+            // 4) Solo ora committiamo sullo stato e salviamo.
+            state.data = {
+                bills:    { LUCE: nuovo.LUCE.bills,    GAS: nuovo.GAS.bills,    ACQUA: nuovo.ACQUA.bills },
+                readings: { LUCE: nuovo.LUCE.readings, GAS: nuovo.GAS.readings, ACQUA: nuovo.ACQUA.readings }
+            };
+
+            statusText.style.color = "var(--text-secondary)";
+            statusText.textContent = "Importazione in corso...";
             for (const ut of utilities) {
                 await saveUtilityData(ut, "bill");
                 await saveUtilityData(ut, "manual");
             }
-            
+
             statusText.style.color = "var(--color-success)";
             statusText.textContent = "Backup importato con successo! Ricarico...";
             setTimeout(() => {
                 window.location.reload();
             }, 1500);
-            
+
         } catch (err) {
             statusText.style.color = "var(--color-danger)";
             statusText.textContent = `Errore di importazione: ${err.message}`;
+            fileInput.value = "";
         }
     };
     reader.readAsText(file);

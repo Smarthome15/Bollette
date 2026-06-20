@@ -157,9 +157,17 @@
 
             <!-- ================= TAB: DASHBOARD ================= -->
             <section id="tab-dashboard" class="tab-content active">
-                <div class="tab-header">
-                    <h2>Panoramica Consumi & Spese</h2>
-                    <p>Sintesi dei costi storici, consumi e ultime rilevazioni.</p>
+                <div class="tab-header flex-between flex-wrap gap-4">
+                    <div>
+                        <h2>Panoramica Consumi & Spese</h2>
+                        <p>Sintesi dei costi storici, consumi e ultime rilevazioni.</p>
+                    </div>
+                    <div class="filter-group">
+                        <label for="dashboard-year-select" class="mr-2 font-medium">Anno:</label>
+                        <select id="dashboard-year-select" class="select-styled">
+                            <!-- Popolato da JS con gli anni che hanno dati -->
+                        </select>
+                    </div>
                 </div>
 
                 <!-- Schede KPI -->
@@ -169,7 +177,7 @@
                             <i data-lucide="credit-card"></i>
                         </div>
                         <div class="kpi-info">
-                            <span class="kpi-title">Spesa Totale Anno</span>
+                            <span class="kpi-title" id="kpi-spesa-totale-title">Spesa Totale Anno</span>
                             <span class="kpi-value" id="kpi-spesa-totale">€ 0.00</span>
                             <span class="kpi-trend" id="kpi-spesa-trend">N/A</span>
                         </div>
@@ -209,7 +217,7 @@
                 <!-- Grafici Dashboard -->
                 <div class="charts-grid">
                     <div class="glass-card chart-container">
-                        <h3>Andamento delle Spese Mensili (€)</h3>
+                        <h3 id="chart-spese-title">Andamento delle Spese Mensili (€)</h3>
                         <div class="chart-wrapper">
                             <canvas id="chart-spese"></canvas>
                         </div>
