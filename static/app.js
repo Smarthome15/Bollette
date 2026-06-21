@@ -12,6 +12,7 @@ const state = {
     charts: {
         spese: null,
         consumi: null,
+        consumiMensili: null,
         audit: null,
         prezzi: null
     },
@@ -19,11 +20,52 @@ const state = {
     dashboardYear: null, // anno selezionato nella dashboard (null = anno corrente)
     currentBillFilter: "all",
     currentReadingFilter: "all",
+    billDateFrom: "", billDateTo: "",       // filtro intervallo date tabella bollette
+    readingDateFrom: "", readingDateTo: "", // filtro intervallo date tabella letture
     tempPdfFile: null // File temporaneo caricato durante l'inserimento bolletta
 };
 
 // Mappa traduzione mesi
 const MESI_IT_BREVE = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
+const MESI_IT = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
+
+// Mese di rilievo di una lettura, come "Marzo 2026", dalla sua data. "—" se data assente.
+function meseDiRilievo(dateStr) {
+    const ym = monthKey(dateStr);
+    if (!ym) return "—";
+    const [y, m] = ym.split("-");
+    return `${MESI_IT[parseInt(m, 10) - 1]} ${y}`;
+}
+
+// Soglie (in mesi) per il promemoria "dati mancanti", configurabili per utenza in
+// Impostazioni e salvate in localStorage. Default: bolletta dopo 3 mesi, lettura dopo 1.
+const SOGLIE_DATI_DEFAULT = {
+    LUCE:  { bollette: 3, letture: 1 },
+    GAS:   { bollette: 3, letture: 1 },
+    ACQUA: { bollette: 3, letture: 1 }
+};
+
+// Legge le soglie salvate (merge col default, così campi mancanti/corrotti non rompono).
+function getSoglieDati() {
+    let salvate = {};
+    try {
+        salvate = JSON.parse(localStorage.getItem("consumicasa_soglie_dati")) || {};
+    } catch (e) {
+        salvate = {};
+    }
+    const out = {};
+    ["LUCE", "GAS", "ACQUA"].forEach(ut => {
+        const d = SOGLIE_DATI_DEFAULT[ut];
+        const s = salvate[ut] || {};
+        const bol = parseInt(s.bollette, 10);
+        const let_ = parseInt(s.letture, 10);
+        out[ut] = {
+            bollette: (isFinite(bol) && bol > 0) ? bol : d.bollette,
+            letture: (isFinite(let_) && let_ > 0) ? let_ : d.letture
+        };
+    });
+    return out;
+}
 
 // Profili utente (senza password): determinano il prefisso usato per i file dati.
 // Il login avviene interamente lato client, così funziona anche col backend spento
@@ -72,10 +114,36 @@ function initSettings() {
     // Compila i campi form impostazioni
     document.getElementById("settings-storage-mode").value = state.storageMode;
     document.getElementById("settings-api-url").value = state.apiBaseUrl;
-    
+
+    // Compila i campi delle soglie promemoria dati (per utenza).
+    const soglie = getSoglieDati();
+    ["luce", "gas", "acqua"].forEach(u => {
+        const ut = u.toUpperCase();
+        const elB = document.getElementById(`soglia-${u}-bollette`);
+        const elL = document.getElementById(`soglia-${u}-letture`);
+        if (elB) elB.value = soglie[ut].bollette;
+        if (elL) elL.value = soglie[ut].letture;
+    });
+
     if (state.storageMode === "local") {
         document.getElementById("settings-api-url-group").classList.add("hidden");
     }
+}
+
+// Salva le soglie promemoria dati (per utenza) in localStorage e aggiorna la Dashboard.
+function saveSoglieDati() {
+    const leggi = (id, def) => {
+        const v = parseInt(document.getElementById(id).value, 10);
+        return (isFinite(v) && v > 0) ? v : def;
+    };
+    const soglie = {
+        LUCE:  { bollette: leggi("soglia-luce-bollette", 3),  letture: leggi("soglia-luce-letture", 1) },
+        GAS:   { bollette: leggi("soglia-gas-bollette", 3),   letture: leggi("soglia-gas-letture", 1) },
+        ACQUA: { bollette: leggi("soglia-acqua-bollette", 3), letture: leggi("soglia-acqua-letture", 1) }
+    };
+    localStorage.setItem("consumicasa_soglie_dati", JSON.stringify(soglie));
+    alert("Soglie salvate. Il promemoria nella Dashboard è aggiornato.");
+    if (state.activeTab === "tab-dashboard") renderDatiMancanti();
 }
 
 // Verifica se l'utente è loggato
@@ -111,6 +179,9 @@ function initEventListeners() {
 
     // Salvataggio Impostazioni
     document.getElementById("btn-save-settings").addEventListener("click", saveSettings);
+
+    // Salvataggio soglie promemoria dati
+    document.getElementById("btn-save-soglie").addEventListener("click", saveSoglieDati);
 
     // Controllo stato codice applicazione (locale vs NAS)
     document.getElementById("btn-check-app-status").addEventListener("click", () => checkAppCodeStatus(true));
@@ -149,6 +220,22 @@ function initEventListeners() {
         });
     });
 
+    // Filtro intervallo date tabella Bollette
+    document.getElementById("bill-filter-from").addEventListener("change", (e) => {
+        state.billDateFrom = e.target.value;
+        renderBillsTable();
+    });
+    document.getElementById("bill-filter-to").addEventListener("change", (e) => {
+        state.billDateTo = e.target.value;
+        renderBillsTable();
+    });
+    document.getElementById("bill-filter-reset").addEventListener("click", () => {
+        state.billDateFrom = ""; state.billDateTo = "";
+        document.getElementById("bill-filter-from").value = "";
+        document.getElementById("bill-filter-to").value = "";
+        renderBillsTable();
+    });
+
     // Filtri tabelle Letture
     document.querySelectorAll(".filter-btn-reading").forEach(btn => {
         btn.addEventListener("click", (e) => {
@@ -157,6 +244,22 @@ function initEventListeners() {
             state.currentReadingFilter = e.target.getAttribute("data-utility");
             renderReadingsTable();
         });
+    });
+
+    // Filtro intervallo date tabella Letture
+    document.getElementById("reading-filter-from").addEventListener("change", (e) => {
+        state.readingDateFrom = e.target.value;
+        renderReadingsTable();
+    });
+    document.getElementById("reading-filter-to").addEventListener("change", (e) => {
+        state.readingDateTo = e.target.value;
+        renderReadingsTable();
+    });
+    document.getElementById("reading-filter-reset").addEventListener("click", () => {
+        state.readingDateFrom = ""; state.readingDateTo = "";
+        document.getElementById("reading-filter-from").value = "";
+        document.getElementById("reading-filter-to").value = "";
+        renderReadingsTable();
     });
 
     // Panel Inserimento Bolletta (Apri/Chiudi)
@@ -745,7 +848,12 @@ function prefillBillForm(data) {
     // Scomposizione costi (per Andamento Prezzi): guard != null così uno 0 valido passa.
     if (data.quota_fissa != null) document.getElementById("bill-quota-fissa").value = data.quota_fissa;
     if (data.quota_energia != null) document.getElementById("bill-quota-energia").value = data.quota_energia;
-    if (data.prezzo_unitario_energia != null) document.getElementById("bill-prezzo-unitario-energia").value = data.prezzo_unitario_energia;
+    // Prezzo unitario: troncato a 3 decimali (più cifre non servono e l'input number
+    // con step=0.001 rifiuterebbe valori con più decimali estratti da Gemini).
+    if (data.prezzo_unitario_energia != null) {
+        const pu = Math.round(parseFloat(data.prezzo_unitario_energia) * 1000) / 1000;
+        document.getElementById("bill-prezzo-unitario-energia").value = isFinite(pu) ? pu : "";
+    }
 
     const utility = document.getElementById("bill-utility").value;
     if (utility === "LUCE") {
@@ -972,6 +1080,126 @@ function popolaSelettoreAnni() {
     ).join("");
 }
 
+// --- PROMEMORIA DATI MANCANTI ---
+
+// Numero di mesi (interi, arrotondati) tra due date 'YYYY-MM-DD'.
+function mesiTraDate(d1, d2) {
+    const a = new Date(d1), b = new Date(d2);
+    return (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+}
+
+// Bolletta probabilmente mancante: se l'ultima è più vecchia della soglia (in mesi)
+// configurata per l'utenza. Restituisce { ultima, mesiFa, soglia } se manca, altrimenti null.
+function bollettaMancante(utility, oggi, soglia) {
+    const date = (state.data.bills[utility] || [])
+        .map(b => b.data)
+        .filter(d => typeof d === "string")
+        .sort((a, b) => a.localeCompare(b));
+    if (date.length === 0) return null;
+    const ultima = date[date.length - 1];
+    const mesiFa = mesiTraDate(ultima, oggi);
+    return mesiFa >= soglia ? { ultima, mesiFa, soglia } : null;
+}
+
+// Mesi (conclusi) senza lettura manuale, dal mese dopo l'ultima lettura fino al mese
+// limite. Il limite è il mese corrente arretrato di 'soglia' mesi: con soglia=1 si
+// avvisa per i mesi fino al mese scorso (il corrente non è ancora dovuto); con soglia
+// maggiore si concede più tolleranza prima di segnalare. Restituisce array di 'YYYY-MM'.
+function mesiLettureMancanti(utility, oggi, soglia) {
+    const date = (state.data.readings[utility] || [])
+        .map(r => r.data)
+        .filter(d => typeof d === "string")
+        .sort((a, b) => a.localeCompare(b));
+    if (date.length === 0) return [];
+    const ultimoMese = monthKey(date[date.length - 1]);
+    if (!ultimoMese) return [];
+    // Mese limite = mese corrente arretrato di 'soglia' mesi.
+    let limite = `${oggi.getFullYear()}-${String(oggi.getMonth() + 1).padStart(2, "0")}`;
+    for (let k = 0; k < soglia; k++) limite = prevMonthKey(limite);
+    if (!limite || ultimoMese >= limite) return [];
+    const mancanti = [];
+    let cur = nextMonthKey(ultimoMese);
+    let guard = 0;
+    while (cur && cur <= limite && guard < 240) {
+        mancanti.push(cur);
+        cur = nextMonthKey(cur);
+        guard++;
+    }
+    return mancanti;
+}
+
+// Mese di COMPETENZA di una bolletta come 'YYYY-MM': è il mese di periodo_fine (il
+// periodo di fatturazione è ciò che conta, non la data di emissione/inserimento).
+// Fallback alla data della bolletta se il periodo non è indicato (record storici).
+function meseCompetenzaBolletta(bill) {
+    return monthKey(bill.periodo_fine) || monthKey(bill.data);
+}
+
+// Anno di competenza di una bolletta (dal mese di competenza). null se indeterminabile.
+function annoCompetenzaBolletta(bill) {
+    const mk = meseCompetenzaBolletta(bill);
+    return mk ? parseInt(mk.slice(0, 4), 10) : null;
+}
+
+// Mese successivo a 'YYYY-MM' (gestisce il confine d'anno).
+function nextMonthKey(ym) {
+    if (typeof ym !== "string" || !/^\d{4}-\d{2}$/.test(ym)) return null;
+    let anno = parseInt(ym.slice(0, 4), 10);
+    let mese = parseInt(ym.slice(5, 7), 10) + 1;
+    if (mese > 12) { mese = 1; anno += 1; }
+    return anno + "-" + (mese < 10 ? "0" : "") + mese;
+}
+
+// Formatta 'YYYY-MM' come "mag 2026".
+function formattaMeseAnno(ym) {
+    const [y, m] = ym.split("-");
+    return `${MESI_IT_BREVE[parseInt(m, 10) - 1].toLowerCase()} ${y}`;
+}
+
+// Popola il riquadro "Dati da inserire" in cima alla Dashboard. Lo mostra solo se
+// c'è davvero qualcosa che manca (bollette in ritardo o letture mensili mancanti).
+function renderDatiMancanti() {
+    const box = document.getElementById("dati-mancanti-box");
+    const list = document.getElementById("dati-mancanti-list");
+    if (!box || !list) return;
+
+    const oggi = new Date();
+    const soglie = getSoglieDati();
+    const utenze = [
+        { key: "LUCE", nome: "Energia Elettrica" },
+        { key: "GAS", nome: "Gas Naturale" },
+        { key: "ACQUA", nome: "Servizio Idrico" }
+    ];
+
+    const righe = [];
+
+    // Bollette in ritardo rispetto alla soglia configurata per l'utenza.
+    utenze.forEach(u => {
+        const m = bollettaMancante(u.key, oggi, soglie[u.key].bollette);
+        if (m) {
+            righe.push(`<div style="padding:6px 0;">📄 <strong>${u.nome}</strong>: ultima bolletta ${formatDate(m.ultima)} (${m.mesiFa} mesi fa, soglia ${m.soglia}): potrebbe mancarne una.</div>`);
+        }
+    });
+
+    // Letture mensili mancanti (fino al mese limite dato dalla soglia).
+    utenze.forEach(u => {
+        const mesi = mesiLettureMancanti(u.key, oggi, soglie[u.key].letture);
+        if (mesi.length > 0) {
+            const elenco = mesi.map(formattaMeseAnno).join(", ");
+            righe.push(`<div style="padding:6px 0;">📊 <strong>${u.nome}</strong>: manca${mesi.length === 1 ? "" : "no"} la lettura di ${elenco}.</div>`);
+        }
+    });
+
+    if (righe.length === 0) {
+        box.classList.add("hidden");
+        list.innerHTML = "";
+        return;
+    }
+    list.innerHTML = righe.join("");
+    box.classList.remove("hidden");
+    lucide.createIcons();
+}
+
 // DASHBOARD RENDER
 function renderDashboard() {
     if (state.activeTab !== "tab-dashboard") return;
@@ -981,6 +1209,10 @@ function renderDashboard() {
 
     // Selettore anno: popola le opzioni e fissa l'anno attivo (default = anno in corso).
     popolaSelettoreAnni();
+
+    // Promemoria dei dati mancanti (bollette in ritardo, letture mensili mancanti).
+    renderDatiMancanti();
+
     const selectedYear = state.dashboardYear;
     const annoCorrente = new Date().getFullYear();
     const isAnnoInCorso = (selectedYear === annoCorrente);
@@ -998,8 +1230,11 @@ function renderDashboard() {
     Object.keys(bills).forEach(ut => {
         bills[ut].forEach(b => {
             if (!b.fattura) return;
-            const bYear = new Date(b.data).getFullYear();
-            const bMonth = new Date(b.data).getMonth() + 1;
+            // Anno/mese di COMPETENZA (periodo_fine), non la data di emissione.
+            const mk = meseCompetenzaBolletta(b);
+            if (!mk) return;
+            const bYear = parseInt(mk.slice(0, 4), 10);
+            const bMonth = parseInt(mk.slice(5, 7), 10);
             if (bYear === selectedYear) {
                 totalSpentSelected += b.fattura;
                 if (bMonth <= meseLimite) cmpSelected += b.fattura;
@@ -1029,7 +1264,8 @@ function renderDashboard() {
     //    mostra l'ULTIMA bolletta di quell'anno (e il relativo consumo).
     const updateKpi = (utility, kpiId, subId, unit) => {
         const tutte = bills[utility].filter(x => x.fattura > 0);
-        const list = tutte.filter(x => new Date(x.data).getFullYear() === selectedYear);
+        // Filtra per ANNO DI COMPETENZA (periodo_fine), non per data di emissione.
+        const list = tutte.filter(x => annoCompetenzaBolletta(x) === selectedYear);
         if (list.length > 0) {
             const last = list[list.length - 1];
             document.getElementById(kpiId).textContent = `€ ${last.fattura.toFixed(2)}`;
@@ -1152,9 +1388,11 @@ function renderDashboardCharts() {
     Object.keys(bills).forEach(ut => {
         bills[ut].forEach(b => {
             if (!b.fattura) return;
-            const monthKey = b.data.substring(0, 7); // YYYY-MM
-            if (speseMensili[monthKey]) {
-                speseMensili[monthKey][ut] += b.fattura;
+            // La spesa è attribuita al mese di COMPETENZA (periodo_fine), non alla
+            // data di emissione/inserimento. Fallback alla data se manca il periodo.
+            const meseComp = meseCompetenzaBolletta(b);
+            if (meseComp && speseMensili[meseComp]) {
+                speseMensili[meseComp][ut] += b.fattura;
             }
         });
     });
@@ -1193,6 +1431,75 @@ function renderDashboardCharts() {
             scales: {
                 x: { stacked: true, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
                 y: { stacked: true, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } }
+            },
+            plugins: {
+                legend: { labels: { color: "#f8fafc" } }
+            }
+        }
+    });
+
+    // --- GRAFICO CONSUMI MENSILI (anno selezionato) ---
+    // Consumo di ogni mese (gen→dic dell'anno selezionato) per utenza, calcolato dalle
+    // AUTOLETTURE: consumo del mese = (ultima lettura del mese) − (ultima lettura del mese
+    // precedente con dati). Se un mese non ha letture resta a 0. Stesse label dei grafici
+    // spese (gen…dic), così i due grafici sono allineati.
+    const consumoMensilePerUtenza = (utility) => {
+        const list = (readings[utility] || [])
+            .slice()
+            .filter(r => typeof r.data === "string")
+            .sort((a, b) => a.data.localeCompare(b.data));
+        // Ultima lettura per ogni mese 'YYYY-MM' (l'ultima del mese vince).
+        const ultimaDelMese = {};
+        list.forEach(r => {
+            const ym = monthKey(r.data);
+            if (ym) ultimaDelMese[ym] = readingValue(r);
+        });
+        // Per ogni mese del grafico: consumo = valore mese − valore del mese-base
+        // precedente (il più recente <= mese precedente). Null-safe sui buchi.
+        return labels.map(ym => {
+            if (!(ym in ultimaDelMese)) return 0;
+            const valFine = ultimaDelMese[ym];
+            // Trova il valore di riferimento: l'ultima lettura nei mesi precedenti.
+            let base = null;
+            let cur = prevMonthKey(ym);
+            let guard = 0;
+            while (cur && guard < 240) {
+                if (cur in ultimaDelMese) { base = ultimaDelMese[cur]; break; }
+                cur = prevMonthKey(cur);
+                guard++;
+            }
+            if (base == null) return 0; // nessuna lettura precedente: niente da differenziare
+            const diff = valFine - base;
+            return diff > 0 ? diff : 0;
+        });
+    };
+
+    const consMensLuce = consumoMensilePerUtenza("LUCE");
+    const consMensGas = consumoMensilePerUtenza("GAS");
+    const consMensAcqua = consumoMensilePerUtenza("ACQUA");
+
+    const titoloConsMens = document.getElementById("chart-consumi-mensili-title");
+    if (titoloConsMens) titoloConsMens.textContent = `Andamento dei Consumi Mensili ${annoGrafico}`;
+
+    const ctxConsMens = document.getElementById("chart-consumi-mensili").getContext("2d");
+    if (state.charts.consumiMensili) state.charts.consumiMensili.destroy();
+
+    state.charts.consumiMensili = new Chart(ctxConsMens, {
+        type: "bar",
+        data: {
+            labels: formattedLabels,
+            datasets: [
+                { label: "Luce (kWh)", data: consMensLuce, backgroundColor: "#eab308", borderRadius: 4 },
+                { label: "Gas (SMC)", data: consMensGas, backgroundColor: "#3b82f6", borderRadius: 4 },
+                { label: "Acqua (m³)", data: consMensAcqua, backgroundColor: "#0d9488", borderRadius: 4 }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
+                y: { beginAtZero: true, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } }
             },
             plugins: {
                 legend: { labels: { color: "#f8fafc" } }
@@ -1303,11 +1610,17 @@ function renderBillsTable() {
         });
     }
 
+    // Filtro per intervallo date (dal/al), sulla data della bolletta.
+    listToShow = filtraPerIntervallo(listToShow, state.billDateFrom, state.billDateTo);
+
     // Ordina per data decrescente
     listToShow.sort((a, b) => b.data.localeCompare(a.data));
 
     if (listToShow.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:var(--text-secondary); padding:20px;">Nessuna bolletta salvata.</td></tr>`;
+        const vuotoMsg = (state.billDateFrom || state.billDateTo)
+            ? "Nessuna bolletta nell'intervallo selezionato."
+            : "Nessuna bolletta salvata.";
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color:var(--text-secondary); padding:20px;">${vuotoMsg}</td></tr>`;
         return;
     }
 
@@ -1346,8 +1659,11 @@ function renderBillsTable() {
             pdfDisplay = `<a href="#" class="pdf-link" data-url="${fileUrl}" data-title="Bolletta ${bill.utility} - ${formatDate(bill.data)}"><i data-lucide="file-text"></i> PDF</a>`;
         }
 
+        const periodoDisplay = formattaPeriodo(bill);
+
         tr.innerHTML = `
             <td>${formatDate(bill.data)}</td>
+            <td style="font-size:0.85rem;">${periodoDisplay}</td>
             <td><span class="badge badge-secondary">${bill.utility}</span></td>
             <td class="font-medium">${amountDisplay}</td>
             <td>${currentVal}</td>
@@ -1419,7 +1735,7 @@ function openPdfModal(url, title, bill) {
         <div class="details-row"><span class="details-label">Tipo Rilevazione</span><span class="details-val text-capitalize">${bill.tipo_lettura || 'Non specificata'}</span></div>
         <div class="details-row"><span class="details-label">Quota Fissa</span><span class="details-val">${bill.quota_fissa != null ? "€ " + bill.quota_fissa.toFixed(2) : "n/d"}</span></div>
         <div class="details-row"><span class="details-label">Quota Energia</span><span class="details-val">${bill.quota_energia != null ? "€ " + bill.quota_energia.toFixed(2) : "n/d"}</span></div>
-        <div class="details-row"><span class="details-label">Prezzo Unitario</span><span class="details-val">${bill.prezzo_unitario_energia != null ? "€ " + bill.prezzo_unitario_energia.toFixed(4) + "/" + unitForUtility(bill.utility) : "n/d"}</span></div>
+        <div class="details-row"><span class="details-label">Prezzo Unitario</span><span class="details-val">${bill.prezzo_unitario_energia != null ? "€ " + bill.prezzo_unitario_energia.toFixed(3) + "/" + unitForUtility(bill.utility) : "n/d"}</span></div>
         <div class="details-row" style="flex-direction:column; border:none; gap:6px;">
             <span class="details-label">Note bolletta:</span>
             <p style="background:rgba(255,255,255,0.03); padding:10px; border-radius:var(--radius-sm); font-size:0.85rem; border:1px solid var(--border-glass);">${bill.note || "Nessuna nota aggiuntiva."}</p>
@@ -1452,18 +1768,24 @@ function renderReadingsTable() {
         });
     }
 
+    // Filtro per intervallo date (dal/al), sulla data della lettura.
+    listToShow = filtraPerIntervallo(listToShow, state.readingDateFrom, state.readingDateTo);
+
     // Ordina per data decrescente
     listToShow.sort((a, b) => b.data.localeCompare(a.data));
 
     if (listToShow.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-secondary); padding:20px;">Nessuna lettura contatore registrata.</td></tr>`;
+        const vuotoMsg = (state.readingDateFrom || state.readingDateTo)
+            ? "Nessuna lettura nell'intervallo selezionato."
+            : "Nessuna lettura contatore registrata.";
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-secondary); padding:20px;">${vuotoMsg}</td></tr>`;
         return;
     }
 
     listToShow.forEach(read => {
         const tr = document.createElement("tr");
         const val = read.lettura_totale !== undefined ? read.lettura_totale : (read.lettura || 0);
-        
+
         let details = "-";
         if (read.utility === "LUCE") {
             details = `<span class="help-text">F1: ${read.lettura_f1 || 0} | F2: ${read.lettura_f2 || 0} | F3: ${read.lettura_f3 || 0}</span>`;
@@ -1474,6 +1796,7 @@ function renderReadingsTable() {
 
         tr.innerHTML = `
             <td>${formatDate(read.data)}</td>
+            <td style="font-size:0.85rem;">${meseDiRilievo(read.data)}</td>
             <td><span class="badge badge-secondary">${read.utility}</span></td>
             <td class="font-medium">${val} ${read.utility === 'LUCE' ? 'kWh' : read.utility === 'GAS' ? 'SMC' : 'm³'}</td>
             <td>${details}</td>
@@ -1696,10 +2019,12 @@ function renderAuditTimelineChart(utility, bills, readings) {
 // ordinata cronologicamente con prezzo unitario, consumo e variazioni % vs la
 // bolletta precedente della stessa utenza. 'soglia' è una frazione (0.15 = 15%).
 function computePrezziVariazioni(utility, soglia) {
+    // Ordina per PERIODO di competenza (periodo_fine), non per data di emissione:
+    // è il periodo che definisce la sequenza cronologica reale dei consumi.
     const bills = (state.data.bills[utility] || [])
         .slice()
         .filter(b => b && typeof b.prezzo_unitario_energia === "number" && isFinite(b.prezzo_unitario_energia) && b.prezzo_unitario_energia > 0)
-        .sort((a, b) => a.data.localeCompare(b.data));
+        .sort((a, b) => (meseCompetenzaBolletta(a) || "").localeCompare(meseCompetenzaBolletta(b) || ""));
 
     const out = [];
     for (let i = 0; i < bills.length; i++) {
@@ -1759,8 +2084,8 @@ function renderPrezziTab() {
         return;
     }
 
-    // Mostra in ordine decrescente di data (più recenti in alto).
-    rows.slice().sort((a, b) => b.bill.data.localeCompare(a.bill.data)).forEach(r => {
+    // Mostra in ordine decrescente di PERIODO (più recenti in alto).
+    rows.slice().sort((a, b) => (meseCompetenzaBolletta(b.bill) || "").localeCompare(meseCompetenzaBolletta(a.bill) || "")).forEach(r => {
         const periodoText = (r.bill.periodo_inizio || r.bill.periodo_fine)
             ? `${r.bill.periodo_inizio ? formatDate(r.bill.periodo_inizio) : "?"} → ${r.bill.periodo_fine ? formatDate(r.bill.periodo_fine) : "?"}`
             : "Non indicato";
@@ -1784,7 +2109,7 @@ function renderPrezziTab() {
         tr.innerHTML = `
             <td>${formatDate(r.bill.data)}</td>
             <td style="font-size:0.85rem;">${periodoText}</td>
-            <td class="font-medium">€ ${r.prezzo.toFixed(4)}/${unit}</td>
+            <td class="font-medium">€ ${r.prezzo.toFixed(3)}/${unit}</td>
             <td>${fmtVar(r.varPrezzo, r.segnalaPrezzo)}</td>
             <td>${r.consumo != null ? r.consumo + " " + unit : "—"}</td>
             <td>${fmtVar(r.varConsumo, r.segnalaConsumo)}</td>
@@ -1981,6 +2306,25 @@ function formatDate(dateStr) {
     const parts = dateStr.split("-");
     if (parts.length !== 3) return dateStr;
     return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+// Periodo di riferimento "inizio → fine" di un record, "—" se assente (es. molte letture).
+function formattaPeriodo(rec) {
+    if (!rec || (!rec.periodo_inizio && !rec.periodo_fine)) return "—";
+    const i = rec.periodo_inizio ? formatDate(rec.periodo_inizio) : "?";
+    const f = rec.periodo_fine ? formatDate(rec.periodo_fine) : "?";
+    return `${i} → ${f}`;
+}
+
+// Filtra una lista di record per intervallo di date [from, to] sul campo `data`
+// (stringhe 'YYYY-MM-DD', confronto lessicografico). Estremi inclusi; vuoti = nessun limite.
+function filtraPerIntervallo(lista, from, to) {
+    return lista.filter(r => {
+        if (typeof r.data !== "string") return false;
+        if (from && r.data < from) return false;
+        if (to && r.data > to) return false;
+        return true;
+    });
 }
 
 function currentYear() {

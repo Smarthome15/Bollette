@@ -174,6 +174,16 @@
                     </div>
                 </div>
 
+                <!-- Promemoria dati mancanti: bollette in ritardo e letture mensili mancanti.
+                     Compare solo se c'è effettivamente qualcosa da inserire (popolato da renderDatiMancanti). -->
+                <div id="dati-mancanti-box" class="glass-card hidden" style="border:1px solid rgba(245,158,11,0.4); background:rgba(245,158,11,0.08);">
+                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                        <i data-lucide="alarm-clock" style="color:#f59e0b;"></i>
+                        <h3 style="margin:0;">Promemoria: dati da inserire</h3>
+                    </div>
+                    <div id="dati-mancanti-list"></div>
+                </div>
+
                 <!-- Schede KPI -->
                 <div class="kpi-grid">
                     <div class="glass-card kpi-card total">
@@ -224,6 +234,13 @@
                         <h3 id="chart-spese-title">Andamento delle Spese Mensili (€)</h3>
                         <div class="chart-wrapper">
                             <canvas id="chart-spese"></canvas>
+                        </div>
+                    </div>
+                    <div class="glass-card chart-container">
+                        <h3 id="chart-consumi-mensili-title">Andamento dei Consumi Mensili</h3>
+                        <p class="subtitle">Consumo per mese (gen→dic) dell'anno selezionato, calcolato dalle autoletture. Unità diverse per utenza: Luce kWh, Gas SMC, Acqua m³.</p>
+                        <div class="chart-wrapper">
+                            <canvas id="chart-consumi-mensili"></canvas>
                         </div>
                     </div>
                     <div class="glass-card chart-container">
@@ -368,7 +385,7 @@
                                     </div>
                                     <div class="form-group col-4">
                                         <label for="bill-prezzo-unitario-energia">Prezzo Unit. (€/unità)</label>
-                                        <input type="number" id="bill-prezzo-unitario-energia" step="0.0001" min="0" placeholder="0.0000">
+                                        <input type="number" id="bill-prezzo-unitario-energia" step="0.001" min="0" placeholder="0.000">
                                     </div>
                                 </div>
 
@@ -429,11 +446,20 @@
                             <button class="filter-btn" data-utility="ACQUA">Acqua</button>
                         </div>
                     </div>
+                    <div class="filter-group flex-wrap gap-2 mt-2" style="align-items:center;">
+                        <span class="text-secondary" style="font-size:0.85rem;">Periodo:</span>
+                        <label for="bill-filter-from" class="text-secondary" style="font-size:0.85rem;">dal</label>
+                        <input type="date" id="bill-filter-from" class="select-styled" style="width:auto;">
+                        <label for="bill-filter-to" class="text-secondary" style="font-size:0.85rem;">al</label>
+                        <input type="date" id="bill-filter-to" class="select-styled" style="width:auto;">
+                        <button id="bill-filter-reset" class="btn-secondary" style="padding:4px 10px;">Azzera</button>
+                    </div>
                     <div class="table-responsive mt-3">
                         <table class="data-table">
                             <thead>
                                 <tr>
                                     <th>Data Bolletta</th>
+                                    <th>Periodo</th>
                                     <th>Utenza</th>
                                     <th>Importo Speso</th>
                                     <th>Lettura Contatore</th>
@@ -471,11 +497,20 @@
                                 <button class="filter-btn-reading" data-utility="ACQUA">Acqua</button>
                             </div>
                         </div>
+                        <div class="filter-group flex-wrap gap-2 mt-2" style="align-items:center;">
+                            <span class="text-secondary" style="font-size:0.85rem;">Periodo:</span>
+                            <label for="reading-filter-from" class="text-secondary" style="font-size:0.85rem;">dal</label>
+                            <input type="date" id="reading-filter-from" class="select-styled" style="width:auto;">
+                            <label for="reading-filter-to" class="text-secondary" style="font-size:0.85rem;">al</label>
+                            <input type="date" id="reading-filter-to" class="select-styled" style="width:auto;">
+                            <button id="reading-filter-reset" class="btn-secondary" style="padding:4px 10px;">Azzera</button>
+                        </div>
                         <div class="table-responsive mt-3">
                             <table class="data-table">
                                 <thead>
                                     <tr>
                                         <th>Data Lettura</th>
+                                        <th>Periodo</th>
                                         <th>Utenza</th>
                                         <th>Valore Lettura</th>
                                         <th>Note / Dettagli</th>
@@ -708,6 +743,39 @@
                             <button id="btn-save-settings" class="btn-primary mt-3">
                                 <i data-lucide="check-circle-2"></i>
                                 <span>Salva Configurazione</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Soglie promemoria "dati mancanti" (per utenza) -->
+                    <div class="glass-card">
+                        <h3>Soglie promemoria dati</h3>
+                        <p class="subtitle">Dopo quanti mesi senza una nuova <strong>bolletta</strong> o <strong>lettura</strong> la Dashboard segnala che potrebbe mancare un dato. Imposta un valore per ogni utenza.</p>
+
+                        <div class="mt-4">
+                            <div class="form-row" style="font-weight:600; color:var(--text-secondary); font-size:0.85rem;">
+                                <div class="form-group col-4">Utenza</div>
+                                <div class="form-group col-4">Bollette (mesi)</div>
+                                <div class="form-group col-4">Letture (mesi)</div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group col-4"><label>💡 Energia Elettrica</label></div>
+                                <div class="form-group col-4"><input type="number" id="soglia-luce-bollette" min="1" max="24" step="1" value="3"></div>
+                                <div class="form-group col-4"><input type="number" id="soglia-luce-letture" min="1" max="24" step="1" value="1"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group col-4"><label>🔥 Gas Naturale</label></div>
+                                <div class="form-group col-4"><input type="number" id="soglia-gas-bollette" min="1" max="24" step="1" value="3"></div>
+                                <div class="form-group col-4"><input type="number" id="soglia-gas-letture" min="1" max="24" step="1" value="1"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group col-4"><label>💧 Servizio Idrico</label></div>
+                                <div class="form-group col-4"><input type="number" id="soglia-acqua-bollette" min="1" max="24" step="1" value="3"></div>
+                                <div class="form-group col-4"><input type="number" id="soglia-acqua-letture" min="1" max="24" step="1" value="1"></div>
+                            </div>
+                            <button id="btn-save-soglie" class="btn-primary mt-3">
+                                <i data-lucide="check-circle-2"></i>
+                                <span>Salva Soglie</span>
                             </button>
                         </div>
                     </div>

@@ -40,7 +40,7 @@ I tre campi di **scomposizione costi** (`quota_fissa`, `quota_energia`, `prezzo_
 
 ## Record lettura manuale
 
-Più semplice: `data`, `note`, e il valore del contatore (`lettura` per gas/acqua, oppure `lettura_f1/f2/f3` + `lettura_totale` per la luce). Alcuni record di lettura che cadono sulla data di una bolletta hanno anche `periodo_inizio`/`periodo_fine` propagati: sono campi "passeggeri", ignorati dal resto dell'app.
+Più semplice: `data`, `note`, e il valore del contatore (`lettura` per gas/acqua, oppure `lettura_f1/f2/f3` + `lettura_totale` per la luce). Per le letture il **periodo di riferimento è il mese di rilievo** (cioè il mese della `data`): una lettura del 31/03 si riferisce a marzo. Alcuni record di lettura che cadono sulla data di una bolletta hanno anche `periodo_inizio`/`periodo_fine` propagati: sono campi "passeggeri", ignorati dall'app (la UI mostra comunque il mese di rilievo, non questi campi).
 
 ## La distinzione cruciale: lettura vs consumo
 
@@ -48,6 +48,13 @@ Più semplice: `data`, `note`, e il valore del contatore (`lettura` per gas/acqu
 - `consumo_fatturato` = **consumo del periodo dichiarato in bolletta**.
 
 Il consumo per-periodo mostrato nei grafici **non è memorizzato**: è calcolato a runtime per **differenza tra letture consecutive** (`.diff()` lato JS). Per questo le letture devono essere **cronologiche e crescenti** — su questo vegliano le guardie di inserimento ([frontend](frontend.md)).
+
+## La distinzione altrettanto cruciale: periodo di competenza vs data
+
+Ogni record ha una `data` (emissione bolletta / giorno della lettura), ma **non è quella a contare** nelle aggregazioni: vale il **periodo di competenza**. La `data` dice solo *quando* hai fatto l'operazione.
+
+- **Bollette**: la competenza è il mese di `periodo_fine` (fallback alla `data` se il periodo manca). Una bolletta emessa a giugno ma che copre maggio pesa su **maggio**. Tutti i grafici/KPI sulle bollette usano gli helper `meseCompetenzaBolletta`/`annoCompetenzaBolletta` ([frontend](frontend.md)), mai `new Date(bill.data)`.
+- **Letture**: la competenza è il mese di rilievo (la `data` della lettura), come detto sopra.
 
 ## Periodo sulle bollette storiche
 

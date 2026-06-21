@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Cos'è
 
-App per tracciare i consumi domestici (luce / gas / acqua): caricamento bollette PDF con estrazione dati via IA, letture manuali mensili dei contatori, dashboard con grafici (con **filtro per anno**), una scheda di audit che confronta i consumi **fatturati vs rilevati**, e una scheda **Andamento Prezzi** che confronta bollette consecutive per scovare rincari tariffari o variazioni di consumo. Pensata per essere servita anche da Home Assistant e usata da telefono/PC. Lingua del codice e dell'UI: italiano.
+App per tracciare i consumi domestici (luce / gas / acqua): caricamento bollette PDF con estrazione dati via IA, letture manuali mensili dei contatori, dashboard con grafici (con **filtro per anno**, spese mensili, consumi mensili e confronto annuale) e **promemoria dei dati mancanti**, una scheda di audit che confronta i consumi **fatturati vs rilevati**, e una scheda **Andamento Prezzi** che confronta bollette consecutive per scovare rincari tariffari o variazioni di consumo. Pensata per essere servita anche da Home Assistant e usata da telefono/PC. Lingua del codice e dell'UI: italiano.
 
 Le 5 tab del frontend: **Dashboard**, **Bollette PDF**, **Letture Manuali**, **Verifica Anomalie** (audit fatturato vs rilevato), **Andamento Prezzi** (variazioni prezzo/consumo tra bollette).
 
@@ -65,6 +65,7 @@ I dati vivono in file JSON in `database/`, **un file per ogni combinazione utent
 - **Record bolletta**: `data`, `periodo_inizio`, `periodo_fine`, `consumo_fatturato`, `fattura`, `pdf_path`, `tipo_lettura` (`rilevata`/`stimata`/`mista`), `note`, e (per l'analisi prezzi) `quota_fissa`, `quota_energia`, `prezzo_unitario_energia` — tutti opzionali (`null` se non disponibili: lo storico ne è privo). LUCE ha anche `lettura_f1/f2/f3` + `lettura_totale`; GAS/ACQUA hanno `lettura` (valore progressivo del contatore).
 - **Periodo sulle bollette storiche**: le bollette importate dall'Excel non avevano `periodo_inizio`/`periodo_fine`/`consumo_fatturato`; sono stati popolati a posteriori (periodo dedotto dalla bolletta precedente; `consumo_fatturato` = "MtC fatturati" Excel per il gas, = consumo rilevato dalle letture per luce/acqua). Anche i record di **lettura** che cadono sulla data di una bolletta hanno ora `periodo_inizio`/`periodo_fine` (campi "passeggeri" ignorati dal resto dell'app).
 - **Distinzione chiave**: `lettura` / `lettura_totale` sono il valore **progressivo del contatore**; `consumo_fatturato` è il **consumo del periodo dichiarato in bolletta**. Il consumo per-periodo nei grafici è invece calcolato a runtime per **differenza tra letture consecutive** (`.diff()` lato JS) — quindi le letture devono essere cronologiche e crescenti.
+- **Periodo di competenza, NON data (principio fondamentale)**: nelle aggregazioni (grafici/KPI) ciò che conta è il **periodo di fatturazione/rilevamento**, non la `data` di emissione/inserimento (che dice solo *quando* è avvenuta l'operazione). Per le **bollette** la competenza = mese di `periodo_fine` (fallback `data` se manca): usare sempre gli helper `meseCompetenzaBolletta`/`annoCompetenzaBolletta` in `app.js`, mai `new Date(bill.data)`. Per le **letture** la competenza = mese di rilievo (la `data` della lettura). La `data` resta usata solo per ordinamento, deduplica, "ultime operazioni" e sync.
 
 ### Flusso di estrazione PDF (solo Gemini, nessun fallback)
 
@@ -72,8 +73,11 @@ I dati vivono in file JSON in `database/`, **un file per ogni combinazione utent
 
 ### Dashboard, Andamento Prezzi e guardie (frontend)
 
-- **Dashboard — filtro Anno** (`renderDashboard`, `popolaSelettoreAnni`, `getAnniConDati`, `state.dashboardYear`): selettore in alto a destra popolato **solo con gli anni che hanno dati**, default = anno in corso. Filtra KPI spesa, trend e grafico "Andamento Spese Mensili" (gen→dic dell'anno scelto). Il trend confronta a **pari periodo** (year-to-date per l'anno in corso, anno intero per gli anni passati). Il grafico "Consumo Storico Annuale" usa le **autoletture** (non le bollette) con ripartizione pro-rata sui giorni a cavallo d'anno.
-- **Tab Andamento Prezzi** (`renderPrezziTab`, `computePrezziVariazioni`, `renderPrezziChart`, `contaSegnalazioniPrezzi`, `getPrezziSoglia`; `state.charts.prezzi`): confronta ogni bolletta con la precedente della stessa utenza su **prezzo unitario** (`prezzo_unitario_energia`) e **consumo**, segnalando le variazioni oltre una **soglia regolabile** (input `prezzi-soglia`, default 15%). Considera **solo le bollette con `prezzo_unitario_energia` reale** (quindi quelle future via PDF): niente stime sullo storico. La pagina **Verifica Anomalie** mostra un avviso cliccabile (`audit-prezzi-alert`) "N variazioni da controllare" che rimanda qui.
+- **Dashboard — filtro Anno** (`renderDashboard`, `popolaSelettoreAnni`, `getAnniConDati`, `state.dashboardYear`): selettore in alto a destra popolato **solo con gli anni che hanno dati**, default = anno in corso. Filtra KPI spesa, trend e i grafici mensili (gen→dic dell'anno scelto). Il trend confronta a **pari periodo** (year-to-date per l'anno in corso, anno intero per gli anni passati). Spese e KPI sono attribuiti al **periodo di competenza** della bolletta (vedi principio sopra), non alla data.
+- **Dashboard — grafici** : "Andamento Spese Mensili" (per competenza), "Andamento Consumi Mensili" (`state.charts.consumiMensili`, dalle autoletture, 3 utenze a barre affiancate) e "Consumo Storico Annuale" (autoletture, ripartizione pro-rata sui giorni a cavallo d'anno).
+- **Dashboard — promemoria dati mancanti** (`renderDatiMancanti`, `bollettaMancante`, `mesiLettureMancanti`; box `dati-mancanti-box`): riquadro in cima, visibile solo se manca qualcosa. Avvisa quando l'ultima bolletta supera la soglia o quando mancano letture mensili. **Soglie configurabili per utenza** in Impostazioni (`getSoglieDati`/`saveSoglieDati`, localStorage `consumicasa_soglie_dati`, default bollette 3 / letture 1).
+- **Tabelle Bollette e Letture** (`renderBillsTable`, `renderReadingsTable`): colonna **Periodo** (bollette: inizio→fine via `formattaPeriodo`; letture: mese di rilievo via `meseDiRilievo`) + **filtro intervallo date** dal/al (`filtraPerIntervallo`, stato `billDateFrom/To`, `readingDateFrom/To`) oltre al filtro per utenza.
+- **Tab Andamento Prezzi** (`renderPrezziTab`, `computePrezziVariazioni`, `renderPrezziChart`, `contaSegnalazioniPrezzi`, `getPrezziSoglia`; `state.charts.prezzi`): confronta ogni bolletta con la precedente della stessa utenza (ordinate per **competenza**) su **prezzo unitario** (`prezzo_unitario_energia`) e **consumo**, segnalando le variazioni oltre una **soglia regolabile** (input `prezzi-soglia`, default 15%). Considera **solo le bollette con `prezzo_unitario_energia` reale** (quindi quelle future via PDF): niente stime sullo storico. Il prezzo unitario è gestito a **3 decimali** ovunque (prefill arrotonda, input `step=0.001`, modal e tabella `.toFixed(3)`). La pagina **Verifica Anomalie** mostra un avviso cliccabile (`audit-prezzi-alert`) "N variazioni da controllare" che rimanda qui.
 - **Guardie pagina Letture** (`saveNewReading`): avviso se il totale luce ≠ F1+F2+F3, se la data è duplicata (propone sostituzione), o se la lettura non è crescente. Fix accodamento pending offline per letture arretrate (parametro `recordModificato` di `saveUtilityData`).
 - **Import backup sicuro** (`importBackup`, `validaBundleBackup`): conferma esplicita (sostituisce, non unisce), validazione del bundle e dei record **prima** di toccare lo stato.
 
@@ -113,20 +117,29 @@ Il backend specchia ogni salvataggio sul NAS Home Assistant via SMB (`DB_DIR_REM
 
 Fatto e in produzione (committato su `main`, pubblicato sul NAS): scheda Audit fatturato vs rilevato (matching mensile); controllo/pubblicazione codice app; estrazione PDF solo-Gemini con blocco offline; chiave fuori dal codice; login senza password; `apiBaseUrl` corretto per HA; `run.bat` migliorato.
 
-### Lavori del 20/06/2026 (da testare il giorno dopo)
+### Già su GitHub `main` (pushato)
 
-**Su GitHub `main`** (commit `5b6f1d1`, già pushato): Dashboard filtro Anno + fix trend/consumi; import backup sicuro; guardie Letture.
-**NON ancora committato** al momento della scrittura: nuova tab **Andamento Prezzi** + estrazione `quota_fissa`/`quota_energia`/`prezzo_unitario_energia` da Gemini (backend `server.py` + frontend). → da committare e poi **pubblicare su NAS** (Impostazioni → Pubblica) perché il codice locale e quello servito da HA divergono.
-**Dati UserA sul NAS** già aggiornati: correzione lettura luce F1 31/12/2024 (333→339, totale 1086); periodi/`consumo_fatturato` popolati su tutte le bollette storiche. Backup pre-modifica in `backup_nas/` (`fix_luce_F1_…`, `fix_audit_periodi_…`).
+Dashboard filtro Anno + fix trend/consumi; import backup sicuro; guardie Letture (commit `5b6f1d1`). Nuova tab **Andamento Prezzi** + estrazione `quota_fissa`/`quota_energia`/`prezzo_unitario_energia` da Gemini, e documentazione `docs/` (commit `f301de2`). **Dati UserA sul NAS** già aggiornati: correzione luce F1 31/12/2024 (333→339, tot 1086); periodi/`consumo_fatturato` popolati su tutte le bollette storiche. Backup in `backup_nas/` (`fix_luce_F1_…`, `fix_audit_periodi_…`).
 
-### Checklist di test (domani)
+### Lavori del 21/06/2026 — IN LOCALE, da testare e poi committare/pubblicare
+
+Non ancora committati (solo `static/app.js`, `static/index.html`, doc): 
+- **Dashboard**: grafico **Consumi Mensili**; riquadro **promemoria dati mancanti** con **soglie configurabili per utenza** (Impostazioni).
+- **Tabelle Bollette/Letture**: colonna **Periodo** + **filtro intervallo date**.
+- **Fix concettuale importante**: grafici e KPI ora usano il **periodo di competenza** (non la `data` di emissione) — vedi principio nel modello dati. 
+- **Prezzo unitario** uniformato a **3 decimali** (era 4: l'input lo rifiutava).
+→ Da committare e poi **pubblicare su NAS** (Impostazioni → Pubblica): codice locale e quello servito da HA divergono.
+
+### Checklist di test
 
 1. **Avvio**: `run.bat` o `server.py`; verificare che il `.venv` esista e che `secrets_local.py` sia presente (estrazione PDF attiva).
-2. **Login + sync**: login come Matteo → scaricare dal NAS nell'overlay di sincronizzazione → i dati compaiono.
-3. **Verifica Anomalie**: cambiando utenza, le bollette devono risultare in maggioranza "Allineate" (gas ha 1 "Sovrafatturata" a giugno 2025); non più tutte "Non verificabili".
-4. **Dashboard**: il selettore Anno mostra 2023–2026 (default 2026); cambiando anno cambiano KPI e grafico spese; i consumi annui non sono più 0 per gas/acqua 2026.
-5. **Andamento Prezzi** (il test principale): caricare **una o più bollette PDF reali** → controllare che Gemini estragga quota fissa/energia/prezzo unitario (visibili nel form pre-compilato e nel modal dettaglio) → la tab deve elencare le bollette con prezzo unitario e, dalla 2ª in poi, le variazioni %; provare a cambiare la **soglia**; verificare che l'avviso compaia in Verifica Anomalie e che cliccandolo si arrivi alla tab.
-6. **Guardie Letture**: provare a inserire una lettura più bassa della precedente, o una data già esistente → devono comparire i confirm.
+2. **Login + sync**: login come Matteo → scaricare dal NAS → i dati compaiono.
+3. **Verifica Anomalie**: in maggioranza "Allineate" (gas 1 "Sovrafatturata" a giugno 2025); non più tutte "Non verificabili".
+4. **Dashboard**: selettore Anno 2023–2026 (default 2026); cambiando anno cambiano KPI e i due grafici mensili (spese + consumi); riquadro promemoria mostra gas/acqua bolletta mancante e letture apr/mag 2026 mancanti; cambiare le soglie in Impostazioni e verificare che il promemoria si aggiorni.
+5. **Andamento Prezzi** (test principale): caricare **bollette PDF reali** → Gemini estrae quota fissa/energia/prezzo unitario (form + modal); la tab elenca le bollette con prezzo unitario e le variazioni %; cambiare la **soglia**; avviso in Verifica Anomalie cliccabile.
+6. **Periodo di competenza**: una bolletta emessa in un mese ma che copre il mese precedente deve pesare sul mese del **periodo** nel grafico spese, non sul mese di emissione.
+7. **Tabelle**: colonna Periodo (bollette inizio→fine; letture "mese di rilievo") e filtro date dal/al + Azzera.
+8. **Guardie Letture**: lettura più bassa della precedente o data duplicata → confirm.
 
 Piste aperte (non ancora fatte), per quando si riprende:
 - **Backend come add-on di Home Assistant** (HA OS è un sistema chiuso: niente systemd libero) per non dipendere da un PC acceso. È il passo "serio" verso il deploy stabile, soprattutto se si vuole l'accesso da fuori via **DuckDNS + NGINX** (in tal caso instradare `/api` same-origin per evitare mixed-content/CORS).
