@@ -76,7 +76,9 @@ I dati vivono in file JSON in `database/`, **un file per ogni combinazione utent
 - **Dashboard — filtro Anno** (`renderDashboard`, `popolaSelettoreAnni`, `getAnniConDati`, `state.dashboardYear`): selettore in alto a destra popolato **solo con gli anni che hanno dati**, default = anno in corso. Filtra KPI spesa, trend e i grafici mensili (gen→dic dell'anno scelto). Il trend confronta a **pari periodo** (year-to-date per l'anno in corso, anno intero per gli anni passati). Spese e KPI sono attribuiti al **periodo di competenza** della bolletta (vedi principio sopra), non alla data.
 - **Dashboard — grafici** : "Andamento Spese Mensili" (per competenza), "Andamento Consumi Mensili" (`state.charts.consumiMensili`, dalle autoletture, 3 utenze a barre affiancate) e "Consumo Storico Annuale" (autoletture, ripartizione pro-rata sui giorni a cavallo d'anno).
 - **Dashboard — promemoria dati mancanti** (`renderDatiMancanti`, `bollettaMancante`, `mesiLettureMancanti`; box `dati-mancanti-box`): riquadro in cima, visibile solo se manca qualcosa. Avvisa quando l'ultima bolletta supera la soglia o quando mancano letture mensili. **Soglie configurabili per utenza** in Impostazioni (`getSoglieDati`/`saveSoglieDati`, localStorage `consumicasa_soglie_dati`, default bollette 3 / letture 1).
-- **Tabelle Bollette e Letture** (`renderBillsTable`, `renderReadingsTable`): colonna **Periodo** (bollette: inizio→fine via `formattaPeriodo`; letture: mese di rilievo via `meseDiRilievo`) + **filtro intervallo date** dal/al (`filtraPerIntervallo`, stato `billDateFrom/To`, `readingDateFrom/To`) oltre al filtro per utenza.
+- **Tabelle Bollette e Letture** (`renderBillsTable`, `renderReadingsTable`): colonna **Periodo** (bollette: inizio→fine via `formattaPeriodo`; letture: mese di rilievo via `meseDiRilievo`) + **filtro intervallo date** dal/al (`filtraPerIntervallo`, stato `billDateFrom/To`, `readingDateFrom/To`) oltre al filtro per utenza. Colonna **Azioni** con Modifica/Elimina: **modifica** (`editBill`/`editReading`, stato `editingBill`/`editingReading`) riusa il form di inserimento pre-compilato e aggiorna il record invece di crearne uno nuovo; in modifica bolletta il PDF allegato resta quello esistente; le guardie letture escludono il record in modifica.
+- **Colori utenze e badge** (`app.css` variabili `--color-luce/gas/acqua`, helper `badgeUtenzaClass`): Luce gialla, **Gas arancione `#f97316`**, **Acqua blu `#3b82f6`**. Usati da KPI, grafici (colori in `app.js`) e badge utenza colorati nelle tabelle (`.badge-luce/gas/acqua`).
+- **No-cache** (meta in `index.html` + `NoCacheStaticMiddleware` in `server.py`): il frontend è servito con `Cache-Control: no-cache` (escl. API e PDF) per non mostrare versioni vecchie di app.js/app.css dopo un aggiornamento.
 - **Tab Andamento Prezzi** (`renderPrezziTab`, `computePrezziVariazioni`, `renderPrezziChart`, `contaSegnalazioniPrezzi`, `getPrezziSoglia`; `state.charts.prezzi`): confronta ogni bolletta con la precedente della stessa utenza (ordinate per **competenza**) su **prezzo unitario** (`prezzo_unitario_energia`) e **consumo**, segnalando le variazioni oltre una **soglia regolabile** (input `prezzi-soglia`, default 15%). Considera **solo le bollette con `prezzo_unitario_energia` reale** (quindi quelle future via PDF): niente stime sullo storico. Il prezzo unitario è gestito a **3 decimali** ovunque (prefill arrotonda, input `step=0.001`, modal e tabella `.toFixed(3)`). La pagina **Verifica Anomalie** mostra un avviso cliccabile (`audit-prezzi-alert`) "N variazioni da controllare" che rimanda qui.
 - **Guardie pagina Letture** (`saveNewReading`): avviso se il totale luce ≠ F1+F2+F3, se la data è duplicata (propone sostituzione), o se la lettura non è crescente. Fix accodamento pending offline per letture arretrate (parametro `recordModificato` di `saveUtilityData`).
 - **Import backup sicuro** (`importBackup`, `validaBundleBackup`): conferma esplicita (sostituisce, non unisce), validazione del bundle e dei record **prima** di toccare lo stato.
@@ -89,7 +91,7 @@ I dati vivono in file JSON in `database/`, **un file per ogni combinazione utent
 
 - **Login**: si sceglie solo il profilo, **senza password** (`handleLogin` + `PROFILI_UTENTE` in `app.js`). È tutto lato client, quindi funziona anche col backend spento. Il profilo determina il `prefix` dei file dati. (L'endpoint `/api/login` esiste ancora ma non è più usato dal frontend.)
 - **`state.storageMode`** (salvato in `localStorage`): `server` usa le API; `local` usa solo `localStorage` del browser (parsing PDF disattivato, scritture accodate).
-- **`apiBaseUrl`** (`initSettings`): se l'utente ha salvato un indirizzo in Impostazioni lo usa; se la pagina è su porta 8000 resta relativo; **altrimenti (es. servito da HA su 8123) resta relativo** e NON assume più `<host>:8000` (che puntava erroneamente al NAS). Per inserire/salvare da HA va impostato a mano l'indirizzo del PC dove gira il backend (es. `http://192.168.1.11:8000`); se non impostato e il backend non risponde, `loadData()` legge i JSON statici serviti da HA (sola lettura).
+- **`apiBaseUrl`** (`initSettings`): se l'utente ha salvato un indirizzo in Impostazioni lo usa; se la pagina è su porta 8000 resta relativo; **altrimenti (es. servito da HA su 8123) resta relativo** e NON assume più `<host>:8000` (che puntava erroneamente al NAS). Per inserire/salvare da HA va impostato a mano l'indirizzo del PC dove gira il backend (es. `http://192.168.1.165:8000`, IP reale attuale — DHCP, può cambiare); se non impostato e il backend non risponde, `loadData()` legge i JSON statici serviti da HA (sola lettura) e l'app mostra un **avviso** (in Impostazioni + hint rosso sotto lo status) che spiega come configurare l'indirizzo.
 
 ### Controllo codice app e pubblicazione sul NAS
 
@@ -110,7 +112,7 @@ Il backend specchia ogni salvataggio sul NAS Home Assistant via SMB (`DB_DIR_REM
 ## Infrastruttura reale (rete)
 
 - **HA / NAS = `192.168.1.15`** (Home Assistant OS su Raspberry Pi). Serve l'app come file **statici** da `/config/www/bollette` sulla porta **8123**; **NON esegue Python**.
-- **Backend Python = su un PC della LAN** (es. `192.168.1.11:8000`), avviato a mano con `run.bat`/`.venv`. Previsti ~3 PC, ognuno col **proprio profilo/dati** (file separati per `db_prefix`), quindi nessuna sovrascrittura tra loro. Il backend **non è un servizio**: vive finché la finestra di `run.bat` resta aperta.
+- **Backend Python = su un PC della LAN** (IP reale attuale `192.168.1.165:8000`, via DHCP → può cambiare al riavvio), avviato a mano con `run.bat`/`.venv`. Previsti ~3 PC, ognuno col **proprio profilo/dati** (file separati per `db_prefix`), quindi nessuna sovrascrittura tra loro. Il backend **non è un servizio**: vive finché la finestra di `run.bat` resta aperta.
 - Accesso da HA: col PC acceso → tutto (incl. inserimento PDF via Gemini); col PC spento → login + **sola lettura** dei dati statici serviti da HA.
 
 ## Stato attuale e prossimi passi (giugno 2026)
@@ -123,12 +125,15 @@ Dashboard filtro Anno + fix trend/consumi; import backup sicuro; guardie Letture
 
 ### Lavori del 21/06/2026 — IN LOCALE, da testare e poi committare/pubblicare
 
-Non ancora committati (solo `static/app.js`, `static/index.html`, doc): 
+Non ancora committati (`static/app.js`, `static/index.html`, `static/app.css`, `server.py`, doc): 
 - **Dashboard**: grafico **Consumi Mensili**; riquadro **promemoria dati mancanti** con **soglie configurabili per utenza** (Impostazioni).
-- **Tabelle Bollette/Letture**: colonna **Periodo** + **filtro intervallo date**.
+- **Tabelle Bollette/Letture**: colonna **Periodo** + **filtro intervallo date** + **pulsante Modifica** (oltre a Elimina) che riusa il form di inserimento.
 - **Fix concettuale importante**: grafici e KPI ora usano il **periodo di competenza** (non la `data` di emissione) — vedi principio nel modello dati. 
 - **Prezzo unitario** uniformato a **3 decimali** (era 4: l'input lo rifiutava).
-→ Da committare e poi **pubblicare su NAS** (Impostazioni → Pubblica): codice locale e quello servito da HA divergono.
+- **Colori utenze**: Gas → arancione `#f97316`, Acqua → blu `#3b82f6`; badge utenza colorati nelle tabelle.
+- **No-cache** del frontend (meta + middleware `server.py`) per non vedere versioni vecchie dopo gli aggiornamenti.
+- **Avviso "indirizzo backend mancante"** quando si è in sola lettura HA (Impostazioni + hint rosso sotto lo status); IP reale del PC = `192.168.1.165`.
+→ Da committare e poi **pubblicare su NAS** (Impostazioni → Pubblica): codice locale e quello servito da HA divergono. NB: questa tornata tocca anche `server.py` (no-cache), quindi va riavviato il backend.
 
 ### Checklist di test
 
@@ -140,6 +145,8 @@ Non ancora committati (solo `static/app.js`, `static/index.html`, doc):
 6. **Periodo di competenza**: una bolletta emessa in un mese ma che copre il mese precedente deve pesare sul mese del **periodo** nel grafico spese, non sul mese di emissione.
 7. **Tabelle**: colonna Periodo (bollette inizio→fine; letture "mese di rilievo") e filtro date dal/al + Azzera.
 8. **Guardie Letture**: lettura più bassa della precedente o data duplicata → confirm.
+9. **Modifica record**: pulsante Modifica su una bolletta → il form si pre-compila, salvando aggiorna (non duplica); idem su una lettura (con "Annulla modifica").
+10. **Colori**: gas arancione, acqua blu, luce gialla — coerenti in KPI, grafici e badge utenza nelle tabelle.
 
 Piste aperte (non ancora fatte), per quando si riprende:
 - **Backend come add-on di Home Assistant** (HA OS è un sistema chiuso: niente systemd libero) per non dipendere da un PC acceso. È il passo "serio" verso il deploy stabile, soprattutto se si vuole l'accesso da fuori via **DuckDNS + NGINX** (in tal caso instradare `/api` same-origin per evitare mixed-content/CORS).

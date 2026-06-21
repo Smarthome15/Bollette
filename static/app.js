@@ -22,6 +22,8 @@ const state = {
     currentReadingFilter: "all",
     billDateFrom: "", billDateTo: "",       // filtro intervallo date tabella bollette
     readingDateFrom: "", readingDateTo: "", // filtro intervallo date tabella letture
+    editingBill: null,    // { utility, index } se si sta MODIFICANDO una bolletta (null = nuova)
+    editingReading: null, // { utility, index } se si sta MODIFICANDO una lettura (null = nuova)
     tempPdfFile: null // File temporaneo caricato durante l'inserimento bolletta
 };
 
@@ -270,6 +272,7 @@ function initEventListeners() {
     
     document.getElementById("btn-chiudi-inserimento").addEventListener("click", () => {
         document.getElementById("panel-inserimento-bolletta").classList.add("hidden");
+        resetBillForm(); // esce dall'eventuale modalità modifica
     });
 
     // Utenza Form Bolletta change (LUCE vs GAS/ACQUA)
@@ -345,6 +348,9 @@ function initEventListeners() {
     
     // Form Submit Lettura Manuale
     document.getElementById("form-lettura").addEventListener("submit", saveNewReading);
+
+    // Annulla modifica lettura
+    document.getElementById("btn-annulla-modifica-lettura").addEventListener("click", annullaModificaLettura);
 
     // Modal close
     document.getElementById("btn-close-modal").addEventListener("click", () => {
@@ -738,7 +744,7 @@ async function syncPendingReadingsToServer() {
 function updateBackendStatusBadge(status) {
     const statusDot = document.querySelector(".status-dot");
     const statusText = document.querySelector(".status-text");
-    
+
     if (status === "local") {
         statusDot.className = "status-dot offline";
         statusText.textContent = "Memoria Locale (No Server)";
@@ -763,6 +769,20 @@ function updateBackendStatusBadge(status) {
         statusText.style.color = "var(--text-muted)";
         statusDot.style.backgroundColor = "";
         statusDot.style.boxShadow = "";
+    }
+
+    // Avviso in Impostazioni: mostra "manca l'indirizzo del backend" solo quando si è
+    // in sola lettura HA (ha-static) E il campo indirizzo è vuoto (quindi configurabile).
+    const alertEl = document.getElementById("api-url-mancante-alert");
+    if (alertEl) {
+        const indirizzoVuoto = !state.apiBaseUrl || state.apiBaseUrl.trim() === "";
+        alertEl.classList.toggle("hidden", !(status === "ha-static" && indirizzoVuoto));
+    }
+
+    // Suggerimento rosso sotto lo status (in basso a sinistra): solo in sola lettura HA.
+    const hintEl = document.getElementById("status-readonly-hint");
+    if (hintEl) {
+        hintEl.classList.toggle("hidden", status !== "ha-static");
     }
 }
 
@@ -881,6 +901,12 @@ function resetBillForm() {
     document.getElementById("form-bolletta").reset();
     removePdfFile();
     toggleUtilityFields("LUCE", "bill");
+    // Esci dalla modalità modifica e ripristina titolo/pulsante.
+    state.editingBill = null;
+    const t = document.getElementById("panel-bolletta-title");
+    if (t) t.textContent = "Registrazione Nuova Bolletta";
+    const b = document.getElementById("btn-salva-bolletta-text");
+    if (b) b.textContent = "Salva Bolletta";
 }
 
 // --- FUNZIONI DI SALVATAGGIO DEI MODULI ---
@@ -892,9 +918,12 @@ async function saveNewBill(e) {
     const billType = document.getElementById("bill-type").value;
     const notes = document.getElementById("bill-notes").value.trim();
     
-    let pdfPath = null;
-    
-    // 1. Carica il PDF sul server se presente
+    // In modifica si parte dal PDF già allegato (non si ricarica il PDF in modifica).
+    const inModifica = state.editingBill && state.data.bills[state.editingBill.utility]
+        && state.data.bills[state.editingBill.utility][state.editingBill.index];
+    let pdfPath = inModifica ? (inModifica.pdf_path || null) : null;
+
+    // 1. Carica il PDF sul server se presente (solo per nuove bollette con PDF)
     if (state.tempPdfFile && state.storageMode !== "local") {
         try {
             const formData = new FormData();
@@ -953,13 +982,26 @@ async function saveNewBill(e) {
         record.lettura = parseInt(document.getElementById("bill-reading").value) || 0;
     }
 
-    // 2. Aggiungi all'array dello stato
-    state.data.bills[utility].push(record);
-    
-    // 3. Salva
+    // 2. Aggiorna il record esistente (modifica) oppure aggiungilo (nuovo).
+    if (state.editingBill && state.editingBill.utility === utility &&
+        state.data.bills[utility][state.editingBill.index]) {
+        state.data.bills[utility][state.editingBill.index] = record;
+    } else if (state.editingBill && state.editingBill.utility !== utility) {
+        // L'utenza è stata cambiata in modifica: rimuovi dal vecchio array e aggiungi al nuovo.
+        state.data.bills[state.editingBill.utility].splice(state.editingBill.index, 1);
+        state.data.bills[utility].push(record);
+    } else {
+        state.data.bills[utility].push(record);
+    }
+
+    // 3. Salva (se l'utenza è cambiata, salva entrambi gli array)
     await saveUtilityData(utility, "bill");
-    
+    if (state.editingBill && state.editingBill.utility !== utility) {
+        await saveUtilityData(state.editingBill.utility, "bill");
+    }
+
     // Pulisci e chiudi form
+    state.editingBill = null;
     document.getElementById("panel-inserimento-bolletta").classList.add("hidden");
     resetBillForm();
 }
@@ -996,9 +1038,14 @@ async function saveNewReading(e) {
 
     const nuovoValore = readingValue(record);
 
-    // GUARDIA 2: esiste già una lettura per questa stessa data → propongo la sostituzione
-    // (altrimenti si creerebbe una riga doppia per lo stesso mese, in silenzio).
-    const idxStessaData = state.data.readings[utility].findIndex(x => x.data === date);
+    // Se stiamo MODIFICANDO una lettura, ricaviamo l'indice del record originale (per
+    // la stessa utenza) così da escluderlo dai controlli e aggiornarlo invece di duplicare.
+    const inModifica = state.editingReading && state.editingReading.utility === utility;
+    const idxModifica = inModifica ? state.editingReading.index : -1;
+
+    // GUARDIA 2: esiste già un'ALTRA lettura per questa stessa data → propongo la sostituzione
+    // (escludo il record che sto modificando, altrimenti darebbe un falso allarme).
+    const idxStessaData = state.data.readings[utility].findIndex((x, i) => x.data === date && i !== idxModifica);
     if (idxStessaData !== -1) {
         if (!confirm(`Esiste già un'autolettura per il ${formatDate(date)}.\n\nVuoi SOSTITUIRLA con questo nuovo valore?`)) {
             return;
@@ -1008,7 +1055,7 @@ async function saveNewReading(e) {
     // GUARDIA 3: lettura non crescente rispetto all'ultima precedente a questa data.
     // Il contatore è progressivo: un valore più basso è quasi sempre un errore di battitura.
     const precedenti = state.data.readings[utility]
-        .filter(x => x.data < date)
+        .filter((x, i) => x.data < date && i !== idxModifica)
         .sort((a, b) => a.data.localeCompare(b.data));
     const ultimaPrec = precedenti.length ? precedenti[precedenti.length - 1] : null;
     if (ultimaPrec && nuovoValore < readingValue(ultimaPrec)) {
@@ -1017,16 +1064,36 @@ async function saveNewReading(e) {
         }
     }
 
-    // Applica: sostituisce la lettura della stessa data se confermato, altrimenti aggiunge.
-    if (idxStessaData !== -1) {
+    // Applica. Casi:
+    //  - modifica con stessa utenza → aggiorna il record all'indice originale;
+    //  - modifica con utenza cambiata → rimuovi dal vecchio array, aggiungi al nuovo;
+    //  - altrimenti: sostituisci se c'è una lettura della stessa data, altrimenti aggiungi.
+    if (inModifica) {
+        state.data.readings[utility][idxModifica] = record;
+    } else if (state.editingReading && state.editingReading.utility !== utility) {
+        state.data.readings[state.editingReading.utility].splice(state.editingReading.index, 1);
+        if (idxStessaData !== -1) state.data.readings[utility][idxStessaData] = record;
+        else state.data.readings[utility].push(record);
+    } else if (idxStessaData !== -1) {
         state.data.readings[utility][idxStessaData] = record;
     } else {
         state.data.readings[utility].push(record);
     }
     await saveUtilityData(utility, "manual", record);
+    if (state.editingReading && state.editingReading.utility !== utility) {
+        await saveUtilityData(state.editingReading.utility, "manual");
+    }
 
+    // Esci dall'eventuale modalità modifica e ripristina il form.
+    state.editingReading = null;
     document.getElementById("form-lettura").reset();
     toggleUtilityFields("LUCE", "read");
+    const rt = document.getElementById("form-lettura-title");
+    if (rt) rt.textContent = "Registra Nuova Rilevazione";
+    const rb = document.getElementById("btn-salva-lettura-text");
+    if (rb) rb.textContent = "Salva Lettura";
+    const ra = document.getElementById("btn-annulla-modifica-lettura");
+    if (ra) ra.classList.add("hidden");
 }
 
 async function deleteBill(utility, index) {
@@ -1035,10 +1102,94 @@ async function deleteBill(utility, index) {
     await saveUtilityData(utility, "bill");
 }
 
+// Apre il form di inserimento in modalità MODIFICA, pre-compilato col record scelto.
+function editBill(utility, index) {
+    const bill = state.data.bills[utility] && state.data.bills[utility][index];
+    if (!bill) return;
+    state.editingBill = { utility, index };
+
+    // Apri il pannello e adatta titolo/pulsante.
+    document.getElementById("panel-inserimento-bolletta").classList.remove("hidden");
+    document.getElementById("panel-bolletta-title").textContent = "Modifica Bolletta";
+    document.getElementById("btn-salva-bolletta-text").textContent = "Salva Modifiche";
+
+    // Imposta l'utenza e mostra i campi giusti, poi compila tutto.
+    document.getElementById("bill-utility").value = utility;
+    toggleUtilityFields(utility, "bill");
+
+    document.getElementById("bill-date").value = bill.data || "";
+    document.getElementById("bill-periodo-inizio").value = bill.periodo_inizio || "";
+    document.getElementById("bill-periodo-fine").value = bill.periodo_fine || "";
+    document.getElementById("bill-consumo-fatturato").value = bill.consumo_fatturato != null ? bill.consumo_fatturato : "";
+    document.getElementById("bill-amount").value = bill.fattura != null ? bill.fattura : "";
+    document.getElementById("bill-type").value = bill.tipo_lettura || "rilevata";
+    document.getElementById("bill-notes").value = bill.note || "";
+    document.getElementById("bill-quota-fissa").value = bill.quota_fissa != null ? bill.quota_fissa : "";
+    document.getElementById("bill-quota-energia").value = bill.quota_energia != null ? bill.quota_energia : "";
+    document.getElementById("bill-prezzo-unitario-energia").value = bill.prezzo_unitario_energia != null ? bill.prezzo_unitario_energia : "";
+
+    if (utility === "LUCE") {
+        document.getElementById("bill-f1").value = bill.lettura_f1 || 0;
+        document.getElementById("bill-f2").value = bill.lettura_f2 || 0;
+        document.getElementById("bill-f3").value = bill.lettura_f3 || 0;
+        document.getElementById("bill-luce-totale").value = bill.lettura_totale != null ? bill.lettura_totale : 0;
+    } else {
+        document.getElementById("bill-reading").value = bill.lettura != null ? bill.lettura : 0;
+    }
+
+    // In modifica non si ricarica il PDF: nascondi il drag&drop e mostra che resta l'allegato.
+    document.getElementById("panel-inserimento-bolletta").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 async function deleteReading(utility, index) {
     if (!confirm("Sei sicuro di voler eliminare questa autolettura?")) return;
     state.data.readings[utility].splice(index, 1);
     await saveUtilityData(utility, "manual");
+}
+
+// Pre-compila il form letture in modalità MODIFICA col record scelto.
+function editReading(utility, index) {
+    const read = state.data.readings[utility] && state.data.readings[utility][index];
+    if (!read) return;
+    state.editingReading = { utility, index };
+
+    document.getElementById("read-utility").value = utility;
+    toggleUtilityFields(utility, "read");
+    document.getElementById("read-date").value = read.data || "";
+    document.getElementById("read-notes").value = (read.note && read.note !== "Lettura rilevata") ? read.note : "";
+
+    if (utility === "LUCE") {
+        document.getElementById("read-f1").value = read.lettura_f1 || 0;
+        document.getElementById("read-f2").value = read.lettura_f2 || 0;
+        document.getElementById("read-f3").value = read.lettura_f3 || 0;
+        document.getElementById("read-value").value = read.lettura_totale != null ? read.lettura_totale : 0;
+    } else {
+        document.getElementById("read-value").value = read.lettura != null ? read.lettura : 0;
+    }
+
+    // Adatta titolo/pulsante e mostra "Annulla".
+    const t = document.getElementById("form-lettura-title");
+    if (t) t.textContent = "Modifica Rilevazione";
+    const b = document.getElementById("btn-salva-lettura-text");
+    if (b) b.textContent = "Salva Modifiche";
+    const a = document.getElementById("btn-annulla-modifica-lettura");
+    if (a) a.classList.remove("hidden");
+
+    document.getElementById("form-lettura").scrollIntoView({ behavior: "smooth", block: "center" });
+    lucide.createIcons();
+}
+
+// Annulla la modifica di una lettura: ripristina il form a "nuova rilevazione".
+function annullaModificaLettura() {
+    state.editingReading = null;
+    document.getElementById("form-lettura").reset();
+    toggleUtilityFields("LUCE", "read");
+    const t = document.getElementById("form-lettura-title");
+    if (t) t.textContent = "Registra Nuova Rilevazione";
+    const b = document.getElementById("btn-salva-lettura-text");
+    if (b) b.textContent = "Salva Lettura";
+    const a = document.getElementById("btn-annulla-modifica-lettura");
+    if (a) a.classList.add("hidden");
 }
 
 // --- CODICE RENDERIZZAZIONE INTERFACCIA (TAB) ---
@@ -1348,7 +1499,7 @@ function renderDashboard() {
             const tr = document.createElement("tr");
             tr.innerHTML = `
                 <td>${formatDate(act.data)}</td>
-                <td><span class="badge badge-secondary">${act.utenza}</span></td>
+                <td><span class="badge ${badgeUtenzaClass(act.utenza)}">${act.utenza}</span></td>
                 <td>${act.tipo}</td>
                 <td class="font-medium">${act.valore}</td>
                 <td>${act.consumo}</td>
@@ -1421,8 +1572,8 @@ function renderDashboardCharts() {
             labels: formattedLabels,
             datasets: [
                 { label: "Luce", data: datasetLuce, backgroundColor: "#eab308", borderRadius: 4 },
-                { label: "Gas", data: datasetGas, backgroundColor: "#3b82f6", borderRadius: 4 },
-                { label: "Acqua", data: datasetAcqua, backgroundColor: "#0d9488", borderRadius: 4 }
+                { label: "Gas", data: datasetGas, backgroundColor: "#f97316", borderRadius: 4 },
+                { label: "Acqua", data: datasetAcqua, backgroundColor: "#3b82f6", borderRadius: 4 }
             ]
         },
         options: {
@@ -1490,8 +1641,8 @@ function renderDashboardCharts() {
             labels: formattedLabels,
             datasets: [
                 { label: "Luce (kWh)", data: consMensLuce, backgroundColor: "#eab308", borderRadius: 4 },
-                { label: "Gas (SMC)", data: consMensGas, backgroundColor: "#3b82f6", borderRadius: 4 },
-                { label: "Acqua (m³)", data: consMensAcqua, backgroundColor: "#0d9488", borderRadius: 4 }
+                { label: "Gas (SMC)", data: consMensGas, backgroundColor: "#f97316", borderRadius: 4 },
+                { label: "Acqua (m³)", data: consMensAcqua, backgroundColor: "#3b82f6", borderRadius: 4 }
             ]
         },
         options: {
@@ -1569,8 +1720,8 @@ function renderDashboardCharts() {
             labels: years.map(String),
             datasets: [
                 { label: "Luce (kWh)", data: consLuceAnnuo, backgroundColor: "rgba(234, 179, 8, 0.7)", borderColor: "#eab308", borderWidth: 1 },
-                { label: "Gas (SMC)", data: consGasAnnuo, backgroundColor: "rgba(59, 130, 246, 0.7)", borderColor: "#3b82f6", borderWidth: 1 },
-                { label: "Acqua (m³)", data: consAcquaAnnuo, backgroundColor: "rgba(13, 148, 136, 0.7)", borderColor: "#0d9488", borderWidth: 1 }
+                { label: "Gas (SMC)", data: consGasAnnuo, backgroundColor: "rgba(249, 115, 22, 0.7)", borderColor: "#f97316", borderWidth: 1 },
+                { label: "Acqua (m³)", data: consAcquaAnnuo, backgroundColor: "rgba(59, 130, 246, 0.7)", borderColor: "#3b82f6", borderWidth: 1 }
             ]
         },
         options: {
@@ -1664,7 +1815,7 @@ function renderBillsTable() {
         tr.innerHTML = `
             <td>${formatDate(bill.data)}</td>
             <td style="font-size:0.85rem;">${periodoDisplay}</td>
-            <td><span class="badge badge-secondary">${bill.utility}</span></td>
+            <td><span class="badge ${badgeUtenzaClass(bill.utility)}">${bill.utility}</span></td>
             <td class="font-medium">${amountDisplay}</td>
             <td>${currentVal}</td>
             <td>${consPeriodo}</td>
@@ -1672,6 +1823,7 @@ function renderBillsTable() {
             <td>${pdfDisplay}</td>
             <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${bill.note || ''}">${bill.note || "-"}</td>
             <td>
+                <button class="btn-secondary-sm btn-edit-bill" data-utility="${bill.utility}" data-index="${bill.originalIndex}">Modifica</button>
                 <button class="btn-danger-sm btn-delete-bill" data-utility="${bill.utility}" data-index="${bill.originalIndex}">Elimina</button>
             </td>
         `;
@@ -1694,6 +1846,15 @@ function renderBillsTable() {
             const ut = e.target.getAttribute("data-utility");
             const idx = parseInt(e.target.getAttribute("data-index"));
             await deleteBill(ut, idx);
+        });
+    });
+
+    // Collega il tasto modifica
+    tbody.querySelectorAll(".btn-edit-bill").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            const ut = e.target.getAttribute("data-utility");
+            const idx = parseInt(e.target.getAttribute("data-index"));
+            editBill(ut, idx);
         });
     });
 
@@ -1725,7 +1886,7 @@ function openPdfModal(url, title, bill) {
         : "Non indicato";
 
     detailsBox.innerHTML = `
-        <div class="details-row"><span class="details-label">Utenza</span><span class="details-val badge badge-secondary">${bill.utility}</span></div>
+        <div class="details-row"><span class="details-label">Utenza</span><span class="details-val badge ${badgeUtenzaClass(bill.utility)}">${bill.utility}</span></div>
         <div class="details-row"><span class="details-label">Data Bolletta</span><span class="details-val">${formatDate(bill.data)}</span></div>
         <div class="details-row"><span class="details-label">Periodo Fatturazione</span><span class="details-val">${periodoText}</span></div>
         <div class="details-row"><span class="details-label">Consumo Fatturato</span><span class="details-val">${consumoFattText}</span></div>
@@ -1797,10 +1958,11 @@ function renderReadingsTable() {
         tr.innerHTML = `
             <td>${formatDate(read.data)}</td>
             <td style="font-size:0.85rem;">${meseDiRilievo(read.data)}</td>
-            <td><span class="badge badge-secondary">${read.utility}</span></td>
+            <td><span class="badge ${badgeUtenzaClass(read.utility)}">${read.utility}</span></td>
             <td class="font-medium">${val} ${read.utility === 'LUCE' ? 'kWh' : read.utility === 'GAS' ? 'SMC' : 'm³'}</td>
             <td>${details}</td>
             <td>
+                <button class="btn-secondary-sm btn-edit-reading" data-utility="${read.utility}" data-index="${read.originalIndex}">Modifica</button>
                 <button class="btn-danger-sm btn-delete-reading" data-utility="${read.utility}" data-index="${read.originalIndex}">Elimina</button>
             </td>
         `;
@@ -1814,6 +1976,16 @@ function renderReadingsTable() {
             await deleteReading(ut, idx);
         });
     });
+
+    tbody.querySelectorAll(".btn-edit-reading").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            const ut = e.target.getAttribute("data-utility");
+            const idx = parseInt(e.target.getAttribute("data-index"));
+            editReading(ut, idx);
+        });
+    });
+
+    lucide.createIcons();
 }
 
 // --- TABELLA AUDIT & VERIFICA ANOMALIE ---
@@ -2333,6 +2505,12 @@ function currentYear() {
 
 function unitForUtility(utility) {
     return utility === "LUCE" ? "kWh" : utility === "GAS" ? "SMC" : "m³";
+}
+
+// Classe CSS del badge colorato per utenza (luce/gas/acqua → colore ufficiale).
+function badgeUtenzaClass(utility) {
+    const u = (utility || "").toUpperCase();
+    return u === "LUCE" ? "badge-luce" : u === "GAS" ? "badge-gas" : u === "ACQUA" ? "badge-acqua" : "badge-secondary";
 }
 
 // --- AUDIT CONSUMI: confronto consumo FATTURATO vs RILEVATO ---

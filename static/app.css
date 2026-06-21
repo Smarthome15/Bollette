@@ -14,10 +14,11 @@
     
     --color-luce: #eab308;
     --color-luce-glow: rgba(234, 179, 8, 0.15);
-    --color-gas: #3b82f6;
-    --color-gas-glow: rgba(59, 130, 246, 0.15);
-    --color-acqua: #0d9488;
-    --color-acqua-glow: rgba(13, 148, 136, 0.15);
+    /* Gas: arancione caldo tendente al rosso. Acqua: il blu prima usato dal gas. */
+    --color-gas: #f97316;
+    --color-gas-glow: rgba(249, 115, 22, 0.15);
+    --color-acqua: #3b82f6;
+    --color-acqua-glow: rgba(59, 130, 246, 0.15);
     
     --color-accent: #6366f1;
     --color-accent-hover: #4f46e5;
@@ -64,7 +65,7 @@ body {
     bottom: 0;
     z-index: -1;
     background: radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.05) 0%, transparent 40%),
-                radial-gradient(circle at 90% 80%, rgba(13, 148, 136, 0.05) 0%, transparent 45%),
+                radial-gradient(circle at 90% 80%, rgba(59, 130, 246, 0.05) 0%, transparent 45%),
                 radial-gradient(circle at 50% 50%, rgba(234, 179, 8, 0.02) 0%, transparent 50%);
     pointer-events: none;
 }
@@ -524,6 +525,25 @@ body {
     color: #fff;
 }
 
+/* Pulsante azione piccolo neutro (es. "Modifica" accanto a "Elimina" nelle tabelle). */
+.btn-secondary-sm {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-glass);
+    color: var(--text-secondary);
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition);
+    margin-right: 6px;
+}
+
+.btn-secondary-sm:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+}
+
 /* --- BADGES --- */
 .badge {
     display: inline-flex;
@@ -541,6 +561,11 @@ body {
 .badge-danger { background: rgba(239, 68, 68, 0.15); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.2); }
 .badge-info { background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.2); }
 .badge-secondary { background: rgba(255, 255, 255, 0.06); color: var(--text-secondary); border: 1px solid var(--border-glass); }
+
+/* Badge per utenza: usano i colori ufficiali (vedi --color-luce/gas/acqua). */
+.badge-luce  { background: var(--color-luce-glow);  color: var(--color-luce);  border: 1px solid var(--color-luce); }
+.badge-gas   { background: var(--color-gas-glow);   color: var(--color-gas);   border: 1px solid var(--color-gas); }
+.badge-acqua { background: var(--color-acqua-glow); color: var(--color-acqua); border: 1px solid var(--color-acqua); }
 
 /* --- COLORI TESTO DI SUPPORTO (usati nella tabella di audit) --- */
 .text-success { color: #34d399; }

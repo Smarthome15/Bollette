@@ -17,6 +17,7 @@ from starlette.responses import JSONResponse, HTMLResponse, FileResponse
 from starlette.staticfiles import StaticFiles
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import pdfplumber
 
 from config import (
@@ -667,9 +668,25 @@ routes = [
     Mount("/", StaticFiles(directory="static", html=True), name="static"),
 ]
 
+# Middleware no-cache: impedisce al browser di servire una versione vecchia del
+# frontend (index.html, app.js, app.css) dopo un aggiornamento del codice. Si applica
+# al sito statico e all'HTML, NON ai PDF archiviati (che possono restare in cache).
+class NoCacheStaticMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        is_api = path.startswith("/api/")
+        is_pdf = path.startswith("/database/pdfs")
+        if not is_api and not is_pdf:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
 # Configurazione CORS per permettere a Home Assistant (porta 8123) di fare chiamate API
 middleware = [
-    Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]),
+    Middleware(NoCacheStaticMiddleware)
 ]
 
 app = Starlette(debug=True, routes=routes, middleware=middleware)

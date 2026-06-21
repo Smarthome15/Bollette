@@ -12,6 +12,7 @@
 - `activeTab` — la tab visibile; le funzioni `render*` escono subito se la loro tab non è attiva.
 - `dashboardYear` — anno selezionato nella Dashboard (default = anno in corso).
 - `billDateFrom`/`billDateTo`, `readingDateFrom`/`readingDateTo` — filtri intervallo date delle tabelle Bollette e Letture.
+- `editingBill`/`editingReading` — `{utility, index}` del record in modifica (null = inserimento nuovo).
 - `storageMode` — `server` (usa le API) o `local` (solo `localStorage`, parsing PDF disattivato).
 - `apiBaseUrl` — base delle API; relativa di default, impostabile a mano per l'uso da Home Assistant.
 
@@ -44,14 +45,19 @@ Panoramica: promemoria dati mancanti, KPI di spesa, grafici, ultime operazioni.
 - **Grafico "Andamento Consumi Mensili"** (`state.charts.consumiMensili`) — consumo per mese dell'anno selezionato, dalle **autoletture** (differenza tra lettura del mese e mese-base precedente); 3 utenze a barre affiancate (unità diverse: kWh/SMC/m³).
 - **Grafico "Consumo Storico Annuale"** — dalle autoletture, ripartizione **pro-rata sui giorni** a cavallo d'anno.
 
-### 2. Bollette PDF — `renderBillsTable`, `saveNewBill`, `prefillBillForm`, `openPdfModal`, `deleteBill`, `handlePdfSelected`
-Storico bollette, inserimento (manuale o da PDF via Gemini), apertura del PDF e del dettaglio, eliminazione. La tabella ha una colonna **Periodo** (inizio→fine, helper `formattaPeriodo`) e un **filtro intervallo date** (dal/al + Azzera, helper `filtraPerIntervallo`) oltre al filtro per utenza. Il flusso di estrazione PDF è descritto in [flusso-pdf](flusso-pdf.md).
+### 2. Bollette PDF — `renderBillsTable`, `saveNewBill`, `prefillBillForm`, `openPdfModal`, `editBill`, `deleteBill`, `handlePdfSelected`
+Storico bollette, inserimento (manuale o da PDF via Gemini), apertura del PDF e del dettaglio, **modifica** ed eliminazione. La tabella ha una colonna **Periodo** (inizio→fine, helper `formattaPeriodo`), un **filtro intervallo date** (dal/al + Azzera, helper `filtraPerIntervallo`) oltre al filtro per utenza, e una colonna **Azioni** con i pulsanti Modifica/Elimina.
+- **Modifica** (`editBill`, `state.editingBill = {utility, index}`): riusa lo stesso pannello di inserimento, pre-compilato; titolo e pulsante diventano "Modifica…/Salva Modifiche". `saveNewBill` aggiorna il record esistente invece di crearne uno nuovo (e sposta tra utenze se l'utenza viene cambiata). In modifica **il PDF allegato resta quello esistente**, non si ricarica. `resetBillForm`/chiusura pannello azzerano `editingBill`.
 
-### 3. Letture Manuali — `renderReadingsTable`, `saveNewReading`, `deleteReading`, `toggleUtilityFields`
-Storico autoletture e inserimento (luce con F1/F2/F3, gas/acqua con valore unico). La tabella ha una colonna **Periodo = mese di rilievo** (`meseDiRilievo`, es. "Marzo 2026") e lo stesso **filtro intervallo date** delle bollette. `saveNewReading` ha **guardie**:
+Il flusso di estrazione PDF è descritto in [flusso-pdf](flusso-pdf.md).
+
+### 3. Letture Manuali — `renderReadingsTable`, `saveNewReading`, `editReading`, `annullaModificaLettura`, `deleteReading`, `toggleUtilityFields`
+Storico autoletture e inserimento (luce con F1/F2/F3, gas/acqua con valore unico). La tabella ha una colonna **Periodo = mese di rilievo** (`meseDiRilievo`, es. "Marzo 2026"), lo stesso **filtro intervallo date** delle bollette, e una colonna **Azioni** con Modifica/Elimina. `saveNewReading` ha **guardie**:
 - avviso se il totale luce ≠ F1+F2+F3;
 - data duplicata → propone la **sostituzione** invece di creare un doppione;
 - lettura non crescente → avviso (il contatore di norma cresce).
+- **Modifica** (`editReading`, `state.editingReading = {utility, index}`): pre-compila il form (sempre visibile), mostra "Annulla modifica" e cambia il pulsante in "Salva Modifiche"; al salvataggio aggiorna il record. Le guardie **escludono il record in modifica** (niente falso allarme "data duplicata" su sé stesso).
+
 Inoltre, in modalità offline, accoda in "pending" la lettura realmente inserita (anche se arretrata).
 
 ### 4. Verifica Anomalie — `renderAuditTab`, `auditConsumoForBill`, helper di matching
@@ -65,7 +71,16 @@ Confronta ogni bolletta con la **precedente della stessa utenza** su **prezzo un
 - `initSettings` / `saveSettings`: storage mode e `apiBaseUrl`.
 - **Soglie promemoria dati** (`getSoglieDati`, `saveSoglieDati`): per ogni utenza, dopo quanti mesi senza bolletta o lettura la Dashboard segnala il dato mancante. Salvate in `localStorage` (`consumicasa_soglie_dati`), default da `SOGLIE_DATI_DEFAULT` (bollette 3 / letture 1). Valori mancanti/corrotti ricadono sul default.
 - `exportBackup` / `importBackup` (+ `validaBundleBackup`): l'import **sostituisce** (non unisce) i dati; per questo chiede conferma esplicita e **valida** il bundle e i record **prima** di toccare `state.data`, così un file corrotto non lascia lo stato a metà.
+- **Avviso indirizzo backend mancante** (`updateBackendStatusBadge`): quando l'app è in sola lettura HA (`ha-static`) e il campo indirizzo backend è vuoto, compaiono (a) un avviso arancione sotto il campo in Impostazioni (`api-url-mancante-alert`) e (b) un hint rosso sotto lo status in basso a sinistra (`status-readonly-hint`). Spiegano perché si è in sola lettura e cosa fare.
 - Controllo e pubblicazione del **codice** sul NAS: vedi [deploy-nas](deploy-nas.md).
+
+## Colori delle utenze
+
+I colori "ufficiali" delle utenze sono variabili CSS in `app.css` (`--color-luce/gas/acqua` + `-glow`): **Luce gialla, Gas arancione (`#f97316`), Acqua blu (`#3b82f6`)**. Sono usati da: KPI Dashboard (via classi `.kpi-card.gas/.acqua`), i tre grafici (colori passati a Chart.js in `app.js`), e i **badge utenza** nelle tabelle (classi `.badge-luce/gas/acqua`, assegnate dalla helper `badgeUtenzaClass(utility)`). Per cambiare un colore di utenza, modifica la variabile CSS e i colori corrispondenti nei dataset Chart.js.
+
+## No-cache (niente versioni vecchie nel browser)
+
+Per evitare che il browser (anche servito da HA) mostri una `app.js`/`app.css` vecchia dopo un aggiornamento: meta `Cache-Control: no-cache` nell'`<head>` di `index.html` **e** middleware `NoCacheStaticMiddleware` nel backend che aggiunge gli header no-cache a HTML/JS/CSS (esclusi API e PDF). Vedi [deploy-nas](deploy-nas.md).
 
 ## Regola sui campi estratti dal PDF
 

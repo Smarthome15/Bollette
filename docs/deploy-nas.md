@@ -5,7 +5,7 @@
 ## Infrastruttura reale (rete)
 
 - **HA / NAS = `192.168.1.15`** — Home Assistant OS su Raspberry Pi. Serve l'app come file **statici** da `/config/www/bollette` sulla porta **8123**. **Non esegue Python.**
-- **Backend Python = su un PC della LAN** (es. `192.168.1.11:8000`), avviato a mano con `run.bat`/`.venv`. Previsti ~3 PC, ognuno col **proprio profilo/dati** (file separati per `db_prefix`), quindi nessuna sovrascrittura tra loro. Il backend **non è un servizio**: vive finché la finestra di `run.bat` resta aperta.
+- **Backend Python = su un PC della LAN** (IP reale attuale `192.168.1.165:8000`, assegnato via DHCP → può cambiare al riavvio), avviato a mano con `run.bat`/`.venv`. Previsti ~3 PC, ognuno col **proprio profilo/dati** (file separati per `db_prefix`), quindi nessuna sovrascrittura tra loro. Il backend **non è un servizio**: vive finché la finestra di `run.bat` resta aperta.
 - **Accesso da HA**: col PC acceso → tutto (incluso l'inserimento PDF via Gemini); col PC spento → login + **sola lettura** dei dati statici serviti da HA.
 
 ## Due sincronizzazioni distinte (da non confondere)
@@ -30,12 +30,16 @@ Distinto dai dati: confronta/pubblica i **file dell'app** (locale `APP_DIR_LOCAL
 ## Storage mode e `apiBaseUrl`
 
 - **`state.storageMode`** (in `localStorage`): `server` usa le API; `local` usa solo `localStorage` del browser (parsing PDF disattivato, scritture accodate).
-- **`apiBaseUrl`** (`initSettings`): se l'utente ha salvato un indirizzo in Impostazioni lo usa; se la pagina è su porta 8000 resta relativo; **altrimenti (es. servito da HA su 8123) resta relativo** e non assume più `<host>:8000`. Per inserire/salvare da HA va impostato a mano l'indirizzo del PC dove gira il backend (es. `http://192.168.1.11:8000`); se non impostato e il backend non risponde, `loadData()` legge i JSON statici serviti da HA (sola lettura).
+- **`apiBaseUrl`** (`initSettings`): se l'utente ha salvato un indirizzo in Impostazioni lo usa; se la pagina è su porta 8000 resta relativo; **altrimenti (es. servito da HA su 8123) resta relativo** e non assume più `<host>:8000`. Per inserire/salvare da HA va impostato a mano l'indirizzo del PC dove gira il backend (es. `http://192.168.1.165:8000` — l'IP reale attuale del PC); se non impostato e il backend non risponde, `loadData()` legge i JSON statici serviti da HA (sola lettura). In questo stato l'app mostra un **avviso** (in Impostazioni e un hint rosso sotto lo status) che spiega che manca l'indirizzo del backend.
+
+## No-cache del frontend
+
+Il frontend è servito sempre con header **`Cache-Control: no-cache`** (meta tag in `index.html` + `NoCacheStaticMiddleware` nel backend, esclusi API e PDF). Senza, il browser — soprattutto la scheda dentro HA — continuerebbe a mostrare una `app.js` vecchia dopo un aggiornamento, perché il nome file non cambia. Con il no-cache, dopo aver **pubblicato il codice sul NAS** le modifiche compaiono senza dover svuotare la cache a mano (al più un refresh la prima volta sull'istanza HA, per scavalcare l'eventuale cache pre-esistente).
 
 ## Degradazione con grazia
 
 - NAS offline → il backend lavora in solo-locale; il mirror riprende quando il NAS torna.
-- Backend (PC) spento → da HA si fa login e si leggono i dati statici; inserimento e PDF non disponibili finché il PC non è riacceso.
+- Backend (PC) spento → da HA si fa login e si leggono i dati statici; inserimento e PDF non disponibili finché il PC non è riacceso. L'app segnala lo stato "sola lettura" e, se manca l'indirizzo backend, come configurarlo.
 
 ## Piste aperte sul deploy
 
