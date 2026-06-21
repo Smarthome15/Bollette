@@ -14,7 +14,11 @@ const state = {
         consumi: null,
         consumiMensili: null,
         audit: null,
-        prezzi: null
+        prezzi: null,
+        confronto: null,
+        confrontoLuce: null,
+        confrontoGas: null,
+        confrontoAcqua: null
     },
     activeTab: "tab-dashboard",
     dashboardYear: null, // anno selezionato nella dashboard (null = anno corrente)
@@ -373,6 +377,12 @@ function initEventListeners() {
     document.getElementById("prezzi-utility-select").addEventListener("change", renderPrezziTab);
     document.getElementById("prezzi-soglia").addEventListener("input", renderPrezziTab);
 
+    // Tab Confronto Periodi: durata, periodi A/B, soglia
+    ["confronto-durata", "confronto-a-mese", "confronto-b-mese", "confronto-soglia"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("input", renderConfrontoTab);
+    });
+
     // Avviso nella pagina Anomalie → porta alla tab Andamento Prezzi
     document.getElementById("audit-prezzi-alert").addEventListener("click", () => {
         switchTab("tab-prezzi");
@@ -441,6 +451,8 @@ function switchTab(tabId) {
         renderAuditTab();
     } else if (tabId === "tab-prezzi") {
         renderPrezziTab();
+    } else if (tabId === "tab-confronto") {
+        renderConfrontoTab();
     }
 }
 
@@ -2328,6 +2340,207 @@ function renderPrezziChart(utility, rows) {
             plugins: {
                 legend: { labels: { color: "#f8fafc" } }
             }
+        }
+    });
+}
+
+// --- CONFRONTO TRA PERIODI ---
+
+// Genera la lista dei mesi 'YYYY-MM' di un periodo: da meseInizio per 'durata' mesi.
+function mesiDelPeriodo(meseInizio, durata) {
+    const out = [];
+    let cur = meseInizio;
+    for (let i = 0; i < durata && cur; i++) {
+        out.push(cur);
+        cur = nextMonthKey(cur);
+    }
+    return out;
+}
+
+// Consumo rilevato di un'utenza in un periodo di mesi: differenza tra l'ultima lettura
+// del periodo e l'ultima lettura PRECEDENTE all'inizio del periodo. null se non calcolabile.
+function consumoPeriodo(utility, mesi) {
+    if (!mesi.length) return null;
+    const reads = (state.data.readings[utility] || [])
+        .filter(r => typeof r.data === "string")
+        .sort((a, b) => a.data.localeCompare(b.data));
+    if (reads.length === 0) return null;
+    const meseInizio = mesi[0];
+    const meseFine = mesi[mesi.length - 1];
+    // Lettura di base = ultima lettura con mese < meseInizio.
+    let base = null, fine = null;
+    reads.forEach(r => {
+        const ym = monthKey(r.data);
+        if (!ym) return;
+        if (ym < meseInizio) base = readingValue(r);           // l'ultima prima dell'inizio
+        if (ym <= meseFine) fine = readingValue(r);            // l'ultima entro la fine
+    });
+    if (base == null || fine == null) return null;
+    const diff = fine - base;
+    return diff > 0 ? diff : null;
+}
+
+// Consumo di OGNI mese di un periodo: array (un valore per posizione del periodo).
+// Per ogni mese: (ultima lettura del mese) − (ultima lettura del mese precedente con dati).
+// 0 se quel mese non ha letture o il dato non è calcolabile.
+function consumoPerMese(utility, mesi) {
+    const reads = (state.data.readings[utility] || [])
+        .filter(r => typeof r.data === "string");
+    const ultimaDelMese = {};
+    reads.forEach(r => {
+        const ym = monthKey(r.data);
+        if (ym) ultimaDelMese[ym] = readingValue(r);
+    });
+    return mesi.map(ym => {
+        if (!(ym in ultimaDelMese)) return 0;
+        const valFine = ultimaDelMese[ym];
+        // Cerca il valore di riferimento nei mesi precedenti.
+        let base = null, cur = prevMonthKey(ym), guard = 0;
+        while (cur && guard < 240) {
+            if (cur in ultimaDelMese) { base = ultimaDelMese[cur]; break; }
+            cur = prevMonthKey(cur); guard++;
+        }
+        if (base == null) return 0;
+        const diff = valFine - base;
+        return diff > 0 ? diff : 0;
+    });
+}
+
+function renderConfrontoTab() {
+    if (state.activeTab !== "tab-confronto") return;
+
+    const durata = parseInt(document.getElementById("confronto-durata").value, 10) || 3;
+    const aMese = document.getElementById("confronto-a-mese").value;   // 'YYYY-MM' o ''
+    const bMese = document.getElementById("confronto-b-mese").value;
+    const sogliaPct = parseFloat(document.getElementById("confronto-soglia").value);
+    const soglia = (isFinite(sogliaPct) && sogliaPct > 0) ? sogliaPct / 100 : 0.10;
+
+    const tbody = document.getElementById("table-confronto-body");
+    const label = document.getElementById("confronto-periodi-label");
+    tbody.innerHTML = "";
+
+    if (!aMese || !bMese) {
+        label.textContent = "Seleziona il mese di partenza dei due periodi da confrontare.";
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-secondary); padding:20px;">Imposta durata, Periodo A e Periodo B.</td></tr>`;
+        renderConfrontoChart([], []);
+        return;
+    }
+
+    const mesiA = mesiDelPeriodo(aMese, durata);
+    const mesiB = mesiDelPeriodo(bMese, durata);
+
+    const fmtMese = (m) => formattaMeseAnno(m); // es. "gen 2025"
+    label.innerHTML = `<strong>A:</strong> ${fmtMese(mesiA[0])} → ${fmtMese(mesiA[mesiA.length - 1])} &nbsp;&nbsp;|&nbsp;&nbsp; <strong>B:</strong> ${fmtMese(mesiB[0])} → ${fmtMese(mesiB[mesiB.length - 1])} &nbsp;(${durata} ${durata === 1 ? "mese" : "mesi"})`;
+
+    const utenze = [
+        { key: "LUCE", nome: "💡 Luce" },
+        { key: "GAS", nome: "🔥 Gas" },
+        { key: "ACQUA", nome: "💧 Acqua" }
+    ];
+
+    // Esito variazione: confronta B rispetto ad A.
+    const esito = (a, b) => {
+        if (a == null || b == null) return { txt: "n/d", cls: "secondary", pct: null };
+        if (a === 0) return { txt: b === 0 ? "—" : "nuovo", cls: "secondary", pct: null };
+        const v = (b - a) / a;
+        if (Math.abs(v) <= soglia) return { txt: "Simile", cls: "success", pct: v };
+        return v > 0 ? { txt: "In aumento", cls: "danger", pct: v } : { txt: "In calo", cls: "warning", pct: v };
+    };
+
+    const fmtPct = (v) => v == null ? "—" : `${v > 0 ? "+" : ""}${Math.round(v * 100)}%`;
+
+    // Confronto SOLO sul CONSUMO (dalle autoletture): la spesa dipende dalle bollette,
+    // che non sono sempre presenti, quindi non viene mostrata qui.
+    const consumiA = [], consumiB = [], labelsUt = [];
+
+    utenze.forEach(u => {
+        const unit = unitForUtility(u.key);
+        const coA = consumoPeriodo(u.key, mesiA);
+        const coB = consumoPeriodo(u.key, mesiB);
+        const e = esito(coA, coB);
+        labelsUt.push(u.key);
+        consumiA.push(coA || 0);
+        consumiB.push(coB || 0);
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+            <td><span class="badge ${badgeUtenzaClass(u.key)}">${u.nome}</span></td>
+            <td>Consumo</td>
+            <td>${coA != null ? coA + " " + unit : "n/d"}</td>
+            <td>${coB != null ? coB + " " + unit : "n/d"}</td>
+            <td class="text-${e.cls} font-medium">${fmtPct(e.pct)}</td>
+            <td><span class="badge badge-${e.cls}">${e.txt}</span></td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    renderConfrontoChart(labelsUt, [
+        { label: `A (${fmtMese(mesiA[0])})`, data: consumiA },
+        { label: `B (${fmtMese(mesiB[0])})`, data: consumiB }
+    ]);
+
+    // 3 grafici mese-per-mese (uno per utenza). Asse X = posizione nel periodo.
+    const labelsPos = mesiA.map((_, i) => `${i + 1}° mese`);
+    const labelA = `A (${fmtMese(mesiA[0])})`;
+    const labelB = `B (${fmtMese(mesiB[0])})`;
+    [
+        { key: "LUCE", canvas: "chart-confronto-luce", chart: "confrontoLuce" },
+        { key: "GAS", canvas: "chart-confronto-gas", chart: "confrontoGas" },
+        { key: "ACQUA", canvas: "chart-confronto-acqua", chart: "confrontoAcqua" }
+    ].forEach(g => {
+        const dataA = consumoPerMese(g.key, mesiA);
+        const dataB = consumoPerMese(g.key, mesiB);
+        renderConfrontoMensileChart(g.canvas, g.chart, labelsPos, labelA, dataA, labelB, dataB);
+    });
+
+    lucide.createIcons();
+}
+
+// Grafico mese-per-mese (A vs B) per una singola utenza.
+function renderConfrontoMensileChart(canvasId, chartKey, labels, labelA, dataA, labelB, dataB) {
+    const ctx = document.getElementById(canvasId).getContext("2d");
+    if (state.charts[chartKey]) state.charts[chartKey].destroy();
+    state.charts[chartKey] = new Chart(ctx, {
+        type: "bar",
+        data: {
+            labels: labels,
+            datasets: [
+                { label: labelA, data: dataA, backgroundColor: "rgba(99, 102, 241, 0.7)", borderColor: "#6366f1", borderWidth: 1, borderRadius: 4 },
+                { label: labelB, data: dataB, backgroundColor: "rgba(234, 179, 8, 0.7)", borderColor: "#eab308", borderWidth: 1, borderRadius: 4 }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
+                y: { beginAtZero: true, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } }
+            },
+            plugins: { legend: { labels: { color: "#f8fafc", boxWidth: 12, font: { size: 10 } } } }
+        }
+    });
+}
+
+function renderConfrontoChart(labels, datasets) {
+    const ctx = document.getElementById("chart-confronto").getContext("2d");
+    if (state.charts.confronto) state.charts.confronto.destroy();
+    state.charts.confronto = new Chart(ctx, {
+        type: "bar",
+        data: {
+            labels: labels,
+            datasets: [
+                { label: datasets[0] ? datasets[0].label : "A", data: datasets[0] ? datasets[0].data : [], backgroundColor: "rgba(99, 102, 241, 0.7)", borderColor: "#6366f1", borderWidth: 1, borderRadius: 4 },
+                { label: datasets[1] ? datasets[1].label : "B", data: datasets[1] ? datasets[1].data : [], backgroundColor: "rgba(234, 179, 8, 0.7)", borderColor: "#eab308", borderWidth: 1, borderRadius: 4 }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
+                y: { beginAtZero: true, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } }
+            },
+            plugins: { legend: { labels: { color: "#f8fafc" } } }
         }
     });
 }

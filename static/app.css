@@ -416,6 +416,20 @@ body {
     letter-spacing: 0.5px;
 }
 
+/* Icona di aiuto nelle intestazioni di colonna: piccola "?" col tooltip nativo (title). */
+.th-help {
+    display: inline-block;
+    width: 13px;
+    height: 13px;
+    margin-left: 5px;
+    vertical-align: -2px;
+    color: var(--text-muted);
+    cursor: help;
+    opacity: 0.7;
+    transition: var(--transition);
+}
+.th-help:hover { opacity: 1; color: var(--color-accent); }
+
 .data-table td {
     padding: 14px 16px;
     border-bottom: 1px solid var(--border-glass);
@@ -638,6 +652,7 @@ input[type="text"],
 input[type="password"],
 input[type="number"],
 input[type="date"],
+input[type="month"],
 input[type="url"],
 select,
 textarea {
@@ -659,6 +674,20 @@ textarea:focus {
     border-color: var(--color-accent);
     box-shadow: 0 0 0 3px var(--color-accent-glow);
     background-color: rgba(15, 23, 42, 0.6);
+}
+
+/* Picker data/mese su tema scuro: schiarisce l'icona del calendario (di default
+   nera e quasi invisibile) e dà un feedback al passaggio del mouse. */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.8);
+    cursor: pointer;
+    opacity: 0.7;
+    transition: var(--transition);
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="month"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
 }
 
 .select-styled {

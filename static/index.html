@@ -68,6 +68,10 @@
                     <i data-lucide="trending-up"></i>
                     <span>Andamento Prezzi</span>
                 </button>
+                <button class="nav-btn" data-tab="tab-confronto">
+                    <i data-lucide="git-compare"></i>
+                    <span>Confronto Periodi</span>
+                </button>
                 <button class="nav-btn" data-tab="tab-settings">
                     <i data-lucide="settings"></i>
                     <span>Impostazioni</span>
@@ -136,11 +140,11 @@
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>Utenza / File</th>
-                                    <th>Modifica PC (Locale)</th>
-                                    <th>Modifica NAS (Remoto)</th>
-                                    <th>Stato</th>
-                                    <th>Risoluzione</th>
+                                    <th>Utenza / File <span class="th-help" title="Il file dati interessato (utenza e tipo: bollette o letture).">ⓘ</span></th>
+                                    <th>Modifica PC (Locale) <span class="th-help" title="Data e ora dell'ultima modifica del file sul PC dove gira il backend.">ⓘ</span></th>
+                                    <th>Modifica NAS (Remoto) <span class="th-help" title="Data e ora dell'ultima modifica del file sul NAS di Home Assistant.">ⓘ</span></th>
+                                    <th>Stato <span class="th-help" title="Esito del confronto locale vs NAS: allineato, solo locale, solo remoto, locale più nuovo o remoto più nuovo.">ⓘ</span></th>
+                                    <th>Risoluzione <span class="th-help" title="Azione per allineare: scaricare dal NAS o caricare sul NAS questo file.">ⓘ</span></th>
                                 </tr>
                             </thead>
                             <tbody id="sync-conflict-tbody">
@@ -269,12 +273,12 @@
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>Data</th>
-                                    <th>Utenza</th>
-                                    <th>Tipo Dato</th>
-                                    <th>Valore/Importo</th>
-                                    <th>Consumo Periodo</th>
-                                    <th>Lettura Contatore</th>
+                                    <th>Data <span class="th-help" title="Data in cui è stata registrata l'operazione (inserimento bolletta o lettura).">ⓘ</span></th>
+                                    <th>Utenza <span class="th-help" title="Tipo di fornitura: Luce, Gas o Acqua.">ⓘ</span></th>
+                                    <th>Tipo Dato <span class="th-help" title="Origine del dato: Bolletta PDF oppure Lettura manuale del contatore.">ⓘ</span></th>
+                                    <th>Valore/Importo <span class="th-help" title="Per le bollette l'importo in €; per le letture non applicabile.">ⓘ</span></th>
+                                    <th>Consumo Periodo <span class="th-help" title="Consumo del periodo calcolato come differenza tra letture consecutive del contatore.">ⓘ</span></th>
+                                    <th>Lettura Contatore <span class="th-help" title="Valore progressivo del contatore registrato (totale per la luce).">ⓘ</span></th>
                                 </tr>
                             </thead>
                             <tbody id="recent-activities-table">
@@ -467,16 +471,16 @@
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>Data Bolletta</th>
-                                    <th>Periodo</th>
-                                    <th>Utenza</th>
-                                    <th>Importo Speso</th>
-                                    <th>Lettura Contatore</th>
-                                    <th>Consumo Calcolato</th>
-                                    <th>Tipo Lettura</th>
-                                    <th>Allegato PDF</th>
-                                    <th>Note</th>
-                                    <th>Azioni</th>
+                                    <th>Data Bolletta <span class="th-help" title="Data di emissione/inserimento della bolletta. Per i grafici conta invece il Periodo, non questa data.">ⓘ</span></th>
+                                    <th>Periodo <span class="th-help" title="Periodo di fatturazione coperto dalla bolletta (inizio → fine). È il periodo di competenza usato in grafici e KPI.">ⓘ</span></th>
+                                    <th>Utenza <span class="th-help" title="Tipo di fornitura: Luce, Gas o Acqua.">ⓘ</span></th>
+                                    <th>Importo Speso <span class="th-help" title="Importo totale della bolletta in €.">ⓘ</span></th>
+                                    <th>Lettura Contatore <span class="th-help" title="Valore progressivo del contatore indicato in bolletta (totale per la luce).">ⓘ</span></th>
+                                    <th>Consumo Calcolato <span class="th-help" title="Consumo del periodo calcolato come differenza rispetto alla bolletta precedente.">ⓘ</span></th>
+                                    <th>Tipo Lettura <span class="th-help" title="Natura della lettura in bolletta: rilevata (reale), stimata o mista/acconto.">ⓘ</span></th>
+                                    <th>Allegato PDF <span class="th-help" title="Link al PDF della bolletta archiviato, se presente.">ⓘ</span></th>
+                                    <th>Note <span class="th-help" title="Annotazioni libere sulla bolletta.">ⓘ</span></th>
+                                    <th>Azioni <span class="th-help" title="Modifica i dati della bolletta o eliminala.">ⓘ</span></th>
                                 </tr>
                             </thead>
                             <tbody id="table-bollette-body">
@@ -518,12 +522,12 @@
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>Data Lettura</th>
-                                        <th>Periodo</th>
-                                        <th>Utenza</th>
-                                        <th>Valore Lettura</th>
-                                        <th>Note / Dettagli</th>
-                                        <th>Azioni</th>
+                                        <th>Data Lettura <span class="th-help" title="Giorno in cui hai rilevato il contatore.">ⓘ</span></th>
+                                        <th>Periodo <span class="th-help" title="Mese di riferimento della lettura (il mese di rilievo).">ⓘ</span></th>
+                                        <th>Utenza <span class="th-help" title="Tipo di fornitura: Luce, Gas o Acqua.">ⓘ</span></th>
+                                        <th>Valore Lettura <span class="th-help" title="Valore progressivo del contatore (totale per la luce; le fasce F1/F2/F3 nei dettagli).">ⓘ</span></th>
+                                        <th>Note / Dettagli <span class="th-help" title="Per la luce, le letture per fascia F1/F2/F3; più eventuali note.">ⓘ</span></th>
+                                        <th>Azioni <span class="th-help" title="Modifica la lettura o eliminala.">ⓘ</span></th>
                                     </tr>
                                 </thead>
                                 <tbody id="table-letture-body">
@@ -637,14 +641,14 @@
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>Bolletta (Data)</th>
-                                    <th>Periodo</th>
-                                    <th>Consumo Fatturato</th>
-                                    <th>Consumo Rilevato</th>
-                                    <th>Discrepanza</th>
-                                    <th>Stato Rilevazione</th>
-                                    <th>Stato Verifica</th>
-                                    <th>Azione Suggerita</th>
+                                    <th>Bolletta (Data) <span class="th-help" title="Data della bolletta analizzata.">ⓘ</span></th>
+                                    <th>Periodo <span class="th-help" title="Periodo di fatturazione della bolletta (inizio → fine), usato per abbinare le autoletture.">ⓘ</span></th>
+                                    <th>Consumo Fatturato <span class="th-help" title="Consumo del periodo dichiarato nella bolletta.">ⓘ</span></th>
+                                    <th>Consumo Rilevato <span class="th-help" title="Consumo ricavato dalle autoletture nello stesso periodo (differenza tra lettura di fine e quella prima dell'inizio).">ⓘ</span></th>
+                                    <th>Discrepanza <span class="th-help" title="Differenza tra fatturato e rilevato, in valore e percentuale.">ⓘ</span></th>
+                                    <th>Stato Rilevazione <span class="th-help" title="Tipo di lettura dichiarata in bolletta: rilevata, stimata o mista.">ⓘ</span></th>
+                                    <th>Stato Verifica <span class="th-help" title="Esito: Allineata, Sovrafatturata, Conguaglio atteso o Non verificabile (dati insufficienti).">ⓘ</span></th>
+                                    <th>Azione Suggerita <span class="th-help" title="Cosa fare in base all'esito (es. verificare la bolletta, inviare un'autolettura).">ⓘ</span></th>
                                 </tr>
                             </thead>
                             <tbody id="table-audit-body">
@@ -698,13 +702,13 @@
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>Bolletta (Data)</th>
-                                    <th>Periodo</th>
-                                    <th>Prezzo Unitario</th>
-                                    <th>Var. Prezzo</th>
-                                    <th>Consumo</th>
-                                    <th>Var. Consumo</th>
-                                    <th>Segnalazione</th>
+                                    <th>Bolletta (Data) <span class="th-help" title="Data della bolletta confrontata.">ⓘ</span></th>
+                                    <th>Periodo <span class="th-help" title="Periodo di fatturazione della bolletta.">ⓘ</span></th>
+                                    <th>Prezzo Unitario <span class="th-help" title="Prezzo della materia consumata (€/unità), estratto dalla bolletta PDF.">ⓘ</span></th>
+                                    <th>Var. Prezzo <span class="th-help" title="Variazione % del prezzo unitario rispetto alla bolletta precedente della stessa utenza.">ⓘ</span></th>
+                                    <th>Consumo <span class="th-help" title="Consumo del periodo dichiarato in bolletta.">ⓘ</span></th>
+                                    <th>Var. Consumo <span class="th-help" title="Variazione % del consumo rispetto alla bolletta precedente.">ⓘ</span></th>
+                                    <th>Segnalazione <span class="th-help" title="Evidenziata se la variazione di prezzo o consumo supera la soglia impostata.">ⓘ</span></th>
                                 </tr>
                             </thead>
                             <tbody id="table-prezzi-body">
@@ -720,6 +724,93 @@
                     <p class="subtitle">Prezzo unitario dell'energia (€ per unità) per ogni bolletta con dati di dettaglio. Una salita costante indica un rincaro tariffario.</p>
                     <div class="chart-wrapper mt-3" style="height: 350px;">
                         <canvas id="chart-prezzi"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= TAB: CONFRONTO PERIODI ================= -->
+            <section id="tab-confronto" class="tab-content">
+                <div class="tab-header">
+                    <h2>Confronto tra Periodi</h2>
+                    <p>Confronta il <strong>consumo</strong> (dalle autoletture) di due periodi della stessa durata, per capire se sono in linea o se qualcosa è cambiato.</p>
+                </div>
+
+                <!-- Selettori: durata, periodo A, periodo B, soglia -->
+                <div class="glass-card">
+                    <div class="form-row">
+                        <div class="form-group col-3">
+                            <label for="confronto-durata">Durata periodo</label>
+                            <select id="confronto-durata">
+                                <option value="1">1 mese</option>
+                                <option value="3" selected>3 mesi</option>
+                                <option value="6">6 mesi</option>
+                                <option value="12">12 mesi</option>
+                            </select>
+                        </div>
+                        <div class="form-group col-3">
+                            <label for="confronto-a-mese">Periodo A — inizio</label>
+                            <input type="month" id="confronto-a-mese">
+                        </div>
+                        <div class="form-group col-3">
+                            <label for="confronto-b-mese">Periodo B — inizio</label>
+                            <input type="month" id="confronto-b-mese">
+                        </div>
+                        <div class="form-group col-3">
+                            <label for="confronto-soglia">Soglia "simile" (%)</label>
+                            <input type="number" id="confronto-soglia" min="1" max="100" step="1" value="10">
+                        </div>
+                    </div>
+                    <p class="subtitle" id="confronto-periodi-label">—</p>
+                </div>
+
+                <!-- Tabella di confronto -->
+                <div class="glass-card mt-4">
+                    <h3>Consumo: Periodo A vs Periodo B</h3>
+                    <p class="subtitle">Consumo di ogni utenza nei due periodi, calcolato dalle autoletture (differenza tra la lettura di fine periodo e quella precedente all'inizio).</p>
+                    <div class="table-responsive mt-3">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Utenza <span class="th-help" title="Tipo di fornitura: Luce, Gas o Acqua.">ⓘ</span></th>
+                                    <th>Metrica <span class="th-help" title="Consumo del periodo dalle autoletture.">ⓘ</span></th>
+                                    <th>Periodo A <span class="th-help" title="Consumo nel primo periodo selezionato.">ⓘ</span></th>
+                                    <th>Periodo B <span class="th-help" title="Consumo nel secondo periodo selezionato.">ⓘ</span></th>
+                                    <th>Variazione <span class="th-help" title="Variazione % del consumo nel periodo B rispetto al periodo A.">ⓘ</span></th>
+                                    <th>Esito <span class="th-help" title="Simile (entro soglia), In aumento o In calo rispetto al periodo A.">ⓘ</span></th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-confronto-body">
+                                <!-- Popolato da JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Grafico di confronto consumi per utenza (totale periodo) -->
+                <div class="glass-card mt-4">
+                    <h3>Confronto Consumi per Utenza (totale periodo)</h3>
+                    <div class="chart-wrapper mt-3" style="height: 320px;">
+                        <canvas id="chart-confronto"></canvas>
+                    </div>
+                </div>
+
+                <!-- 3 grafici mese-per-mese, uno per utenza -->
+                <div class="glass-card mt-4">
+                    <h3>Confronto mese per mese</h3>
+                    <p class="subtitle">Consumo di ogni mese del periodo (1° mese, 2° mese, …), Periodo A vs Periodo B, per ciascuna utenza.</p>
+                    <div class="charts-grid mt-3">
+                        <div class="chart-container">
+                            <h4 class="section-divider">💡 Luce (kWh)</h4>
+                            <div class="chart-wrapper" style="height: 260px;"><canvas id="chart-confronto-luce"></canvas></div>
+                        </div>
+                        <div class="chart-container">
+                            <h4 class="section-divider">🔥 Gas (SMC)</h4>
+                            <div class="chart-wrapper" style="height: 260px;"><canvas id="chart-confronto-gas"></canvas></div>
+                        </div>
+                        <div class="chart-container">
+                            <h4 class="section-divider">💧 Acqua (m³)</h4>
+                            <div class="chart-wrapper" style="height: 260px;"><canvas id="chart-confronto-acqua"></canvas></div>
+                        </div>
                     </div>
                 </div>
             </section>

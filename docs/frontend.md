@@ -34,7 +34,7 @@ Ciò che conta in ogni grafico/KPI è il **periodo di fatturazione/rilevamento**
 
 ## Navigazione a tab
 
-`switchTab(tabId)` cambia la sezione visibile e invoca la funzione di render giusta. Le 5 tab:
+`switchTab(tabId)` cambia la sezione visibile e invoca la funzione di render giusta. Le 6 tab:
 
 ### 1. Dashboard — `renderDashboard`, `renderDashboardCharts`
 Panoramica: promemoria dati mancanti, KPI di spesa, grafici, ultime operazioni.
@@ -66,6 +66,9 @@ Confronta, per ogni bolletta, il **consumo fatturato** col **consumo rilevato** 
 ### 5. Andamento Prezzi — `renderPrezziTab`, `computePrezziVariazioni`, `renderPrezziChart`, `contaSegnalazioniPrezzi`, `getPrezziSoglia`
 Confronta ogni bolletta con la **precedente della stessa utenza** su **prezzo unitario** (`prezzo_unitario_energia`) e **consumo**, evidenziando le variazioni oltre una **soglia regolabile** (default 15%). Considera **solo le bollette con prezzo unitario reale** (quelle estratte da PDF): niente stime sullo storico. Tabella delle variazioni + grafico dell'andamento del prezzo unitario nel tempo. `contaSegnalazioniPrezzi` alimenta il badge nella pagina Verifica Anomalie.
 
+### 6. Confronto Periodi — `renderConfrontoTab`, `mesiDelPeriodo`, `consumoPeriodo`, `consumoPerMese`, `renderConfrontoChart`, `renderConfrontoMensileChart`
+Confronta il **consumo** di due periodi della stessa durata. Selettori: **durata** (1/3/6/12 mesi), **Periodo A** e **Periodo B** (mese-anno d'inizio, `<input type="month">`), **soglia "simile"** regolabile (default 10%). Mostra **solo il consumo** dalle autoletture (la spesa dipende dalle bollette, non sempre presenti, quindi è stata esclusa): per ogni utenza consumo A vs B con variazione % ed esito (Simile/In aumento/In calo). Tre output: tabella, grafico totale per utenza (`state.charts.confronto`), e **3 grafici mese-per-mese** uno per utenza (`confrontoLuce/Gas/Acqua`) con asse X = posizione nel periodo (1° mese, 2° mese, …) così A e B sono allineabili anche se partono da mesi diversi.
+
 ## Impostazioni e backup
 
 - `initSettings` / `saveSettings`: storage mode e `apiBaseUrl`.
@@ -77,6 +80,10 @@ Confronta ogni bolletta con la **precedente della stessa utenza** su **prezzo un
 ## Colori delle utenze
 
 I colori "ufficiali" delle utenze sono variabili CSS in `app.css` (`--color-luce/gas/acqua` + `-glow`): **Luce gialla, Gas arancione (`#f97316`), Acqua blu (`#3b82f6`)**. Sono usati da: KPI Dashboard (via classi `.kpi-card.gas/.acqua`), i tre grafici (colori passati a Chart.js in `app.js`), e i **badge utenza** nelle tabelle (classi `.badge-luce/gas/acqua`, assegnate dalla helper `badgeUtenzaClass(utility)`). Per cambiare un colore di utenza, modifica la variabile CSS e i colori corrispondenti nei dataset Chart.js.
+
+## Icone di aiuto nelle tabelle
+
+Ogni intestazione di colonna (`<th>`) ha un'icona **ⓘ** (`span.th-help`) con un tooltip nativo (`title`) che spiega cosa contiene la colonna. Tecnica volutamente leggera: nessun JS, funziona ovunque (anche dentro HA). Le descrizioni riflettono il comportamento reale del software (es. su "Data Bolletta" ricorda che per i grafici conta il Periodo, non la data).
 
 ## No-cache (niente versioni vecchie nel browser)
 
