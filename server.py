@@ -387,8 +387,8 @@ def parse_pdf_gemini(text: str, utility_type: str):
         Se un dato non è presente, metti null.
         Campi richiesti:
         - data: la data di fine periodo o di emissione della bolletta (in formato YYYY-MM-DD).
-        - periodo_inizio: la data di INIZIO del periodo di fatturazione/consumo indicato in bolletta (formato YYYY-MM-DD, null se assente).
-        - periodo_fine: la data di FINE del periodo di fatturazione/consumo indicato in bolletta (formato YYYY-MM-DD, null se assente).
+        - periodo_inizio: la data di INIZIO del periodo di fatturazione/consumo indicato in bolletta (formato YYYY-MM-DD, null se assente). Usa il PERIODO DI RIFERIMENTO della fornitura (il periodo a cui si riferisce il consumo fatturato), NON la data di emissione, di scadenza o di sola lettura del contatore. Se in bolletta compaiono più periodi, scegli quello etichettato come "periodo di riferimento" / "periodo di fatturazione" / "consumi dal … al …".
+        - periodo_fine: la data di FINE dello stesso periodo di riferimento (formato YYYY-MM-DD, null se assente).
         - consumo_fatturato: il consumo del periodo DICHIARATO nella bolletta (numero, nell'unità dell'utenza: kWh per la luce, Smc per il gas, m³ per l'acqua). È il consumo del periodo, NON la lettura del contatore. Metti null se non indicato.
         - fattura: l'importo totale da pagare in Euro (numero decimale). Se non c'è importo o è solo una comunicazione, metti null.
         - quota_fissa: la somma delle quote FISSE del periodo in Euro (numero decimale: es. quota fissa di vendita + trasporto/gestione contatore, indipendenti dal consumo). null se non scorporabile.
@@ -405,6 +405,17 @@ def parse_pdf_gemini(text: str, utility_type: str):
         else:
             prompt += """
             - lettura: valore lettura contatore (intero, null se assente).
+            """
+            if utility_type.upper() == "ACQUA":
+                prompt += """
+
+            ATTENZIONE PERIODO (ACQUA): la bolletta dell'acqua riporta spesso più date
+            (data emissione, data scadenza, periodo di lettura del contatore, eventuali
+            acconti/conguagli). Per periodo_inizio/periodo_fine usa ESCLUSIVAMENTE la
+            sezione "Periodo di riferimento" (la dicitura può essere "Periodo di
+            riferimento: dal GG/MM/AAAA al GG/MM/AAAA"). NON usare il periodo di lettura,
+            la data di emissione né la scadenza. Se la sezione "Periodo di riferimento"
+            non è presente, metti null su entrambi.
             """
         prompt += f"\n\nTesto della bolletta:\n{text}"
         
