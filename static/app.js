@@ -6,7 +6,8 @@ const state = {
     apiBaseUrl: "",
     storageMode: "server", // 'server' o 'local'
     data: {
-        bills: { LUCE: [], GAS: [], ACQUA: [] },
+        // RIFIUTI (TARI) è solo-bollette: niente letture (readings resta a 3 utenze).
+        bills: { LUCE: [], GAS: [], ACQUA: [], RIFIUTI: [] },
         readings: { LUCE: [], GAS: [], ACQUA: [] }
     },
     charts: {
@@ -48,7 +49,9 @@ function meseDiRilievo(dateStr) {
 const SOGLIE_DATI_DEFAULT = {
     LUCE:  { bollette: 3, letture: 1 },
     GAS:   { bollette: 3, letture: 1 },
-    ACQUA: { bollette: 3, letture: 1 }
+    ACQUA: { bollette: 3, letture: 1 },
+    // RIFIUTI: tassa annuale, soglia bolletta 12 mesi; nessuna lettura (letture: 0).
+    RIFIUTI: { bollette: 12, letture: 0 }
 };
 
 // Legge le soglie salvate (merge col default, così campi mancanti/corrotti non rompono).
@@ -60,14 +63,15 @@ function getSoglieDati() {
         salvate = {};
     }
     const out = {};
-    ["LUCE", "GAS", "ACQUA"].forEach(ut => {
+    ["LUCE", "GAS", "ACQUA", "RIFIUTI"].forEach(ut => {
         const d = SOGLIE_DATI_DEFAULT[ut];
         const s = salvate[ut] || {};
         const bol = parseInt(s.bollette, 10);
         const let_ = parseInt(s.letture, 10);
         out[ut] = {
             bollette: (isFinite(bol) && bol > 0) ? bol : d.bollette,
-            letture: (isFinite(let_) && let_ > 0) ? let_ : d.letture
+            // letture può essere 0 (es. RIFIUTI = nessuna soglia letture): 0 valido.
+            letture: (isFinite(let_) && let_ >= 0) ? let_ : d.letture
         };
     });
     return out;
@@ -123,10 +127,10 @@ function initSettings() {
 
     // Compila i campi delle soglie promemoria dati (per utenza).
     const soglie = getSoglieDati();
-    ["luce", "gas", "acqua"].forEach(u => {
+    ["luce", "gas", "acqua", "rifiuti"].forEach(u => {
         const ut = u.toUpperCase();
         const elB = document.getElementById(`soglia-${u}-bollette`);
-        const elL = document.getElementById(`soglia-${u}-letture`);
+        const elL = document.getElementById(`soglia-${u}-letture`); // assente per rifiuti
         if (elB) elB.value = soglie[ut].bollette;
         if (elL) elL.value = soglie[ut].letture;
     });
@@ -145,7 +149,8 @@ function saveSoglieDati() {
     const soglie = {
         LUCE:  { bollette: leggi("soglia-luce-bollette", 3),  letture: leggi("soglia-luce-letture", 1) },
         GAS:   { bollette: leggi("soglia-gas-bollette", 3),   letture: leggi("soglia-gas-letture", 1) },
-        ACQUA: { bollette: leggi("soglia-acqua-bollette", 3), letture: leggi("soglia-acqua-letture", 1) }
+        ACQUA: { bollette: leggi("soglia-acqua-bollette", 3), letture: leggi("soglia-acqua-letture", 1) },
+        RIFIUTI: { bollette: leggi("soglia-rifiuti-bollette", 12), letture: 0 }
     };
     localStorage.setItem("consumicasa_soglie_dati", JSON.stringify(soglie));
     alert("Soglie salvate. Il promemoria nella Dashboard è aggiornato.");
@@ -509,6 +514,12 @@ function toggleUtilityFields(utility, formPrefix) {
             fieldsGasAcqua.classList.add("hidden");
             document.getElementById("bill-luce-totale").required = true;
             document.getElementById("bill-reading").required = false;
+        } else if (utility === "RIFIUTI") {
+            // RIFIUTI (TARI): nessun contatore → nascondi tutti i campi lettura.
+            fieldsLuce.classList.add("hidden");
+            fieldsGasAcqua.classList.add("hidden");
+            document.getElementById("bill-luce-totale").required = false;
+            document.getElementById("bill-reading").required = false;
         } else {
             fieldsLuce.classList.add("hidden");
             fieldsGasAcqua.classList.remove("hidden");
@@ -534,14 +545,19 @@ function toggleUtilityFields(utility, formPrefix) {
 async function loadData() {
     if (!state.user) return;
     
-    const utilities = ["LUCE", "GAS", "ACQUA"];
-    
+    // RIFIUTI ha solo bollette (niente letture). Lista completa per le bollette,
+    // e una lista "con letture" separata per non creare readings.RIFIUTI.
+    const utilities = ["LUCE", "GAS", "ACQUA", "RIFIUTI"];
+    const utilitiesConLetture = ["LUCE", "GAS", "ACQUA"];
+
     if (state.storageMode === "local") {
         // Carica da LocalStorage
         utilities.forEach(ut => {
             const bKey = `local_${state.user.prefix}_${ut.toLowerCase()}`;
-            const rKey = `local_${state.user.prefix}_man_${ut.toLowerCase()}`;
             state.data.bills[ut] = JSON.parse(localStorage.getItem(bKey)) || [];
+        });
+        utilitiesConLetture.forEach(ut => {
+            const rKey = `local_${state.user.prefix}_man_${ut.toLowerCase()}`;
             state.data.readings[ut] = JSON.parse(localStorage.getItem(rKey)) || [];
         });
         updateBackendStatusBadge("local");
@@ -569,13 +585,15 @@ async function loadData() {
             await syncPendingReadingsToServer();
             
             for (const ut of utilities) {
-                // Carica bollette
+                // Carica bollette (tutte le utenze, RIFIUTI incluso)
                 const bRes = await fetch(`${state.apiBaseUrl}/api/data?user=${state.user.username}&utility=${ut}&type=bill`);
                 if (bRes.ok) state.data.bills[ut] = await bRes.json();
-                
-                // Carica letture
-                const rRes = await fetch(`${state.apiBaseUrl}/api/data?user=${state.user.username}&utility=${ut}&type=manual`);
-                if (rRes.ok) state.data.readings[ut] = await rRes.json();
+
+                // Carica letture solo per le utenze con contatore (no RIFIUTI)
+                if (ut !== "RIFIUTI") {
+                    const rRes = await fetch(`${state.apiBaseUrl}/api/data?user=${state.user.username}&utility=${ut}&type=manual`);
+                    if (rRes.ok) state.data.readings[ut] = await rRes.json();
+                }
             }
             updateBackendStatusBadge("online");
         } else {
@@ -592,15 +610,18 @@ async function loadData() {
                         loadedFromHAStatic = true;
                     }
                     clearTimeout(timeoutB);
-                    
-                    const controllerR = new AbortController();
-                    const timeoutR = setTimeout(() => controllerR.abort(), 1500);
-                    const rRes = await fetch(`../database/${prefix}_man_${ut.toLowerCase()}.json`, { signal: controllerR.signal });
-                    if (rRes.ok) {
-                        state.data.readings[ut] = await rRes.json();
-                        loadedFromHAStatic = true;
+
+                    // Letture solo per le utenze con contatore (no RIFIUTI)
+                    if (ut !== "RIFIUTI") {
+                        const controllerR = new AbortController();
+                        const timeoutR = setTimeout(() => controllerR.abort(), 1500);
+                        const rRes = await fetch(`../database/${prefix}_man_${ut.toLowerCase()}.json`, { signal: controllerR.signal });
+                        if (rRes.ok) {
+                            state.data.readings[ut] = await rRes.json();
+                            loadedFromHAStatic = true;
+                        }
+                        clearTimeout(timeoutR);
                     }
-                    clearTimeout(timeoutR);
                 }
             } catch(staticErr) {
                 console.error("Impossibile caricare JSON statici da HA:", staticErr);
@@ -893,6 +914,8 @@ function prefillBillForm(data) {
         document.getElementById("bill-f2").value = data.lettura_f2 || 0;
         document.getElementById("bill-f3").value = data.lettura_f3 || 0;
         document.getElementById("bill-luce-totale").value = data.lettura_totale || (data.lettura_f1 + data.lettura_f2 + data.lettura_f3) || 0;
+    } else if (utility === "RIFIUTI") {
+        // nessun campo lettura da pre-compilare per i rifiuti
     } else {
         document.getElementById("bill-reading").value = data.lettura || 0;
     }
@@ -990,6 +1013,12 @@ async function saveNewBill(e) {
         record.lettura_f2 = f2;
         record.lettura_f3 = f3;
         record.lettura_totale = parseInt(document.getElementById("bill-luce-totale").value) || (f1 + f2 + f3);
+    } else if (utility === "RIFIUTI") {
+        // RIFIUTI (TARI): nessuna lettura né consumo/quote. Solo periodo + importo.
+        record.consumo_fatturato = null;
+        record.quota_fissa = null;
+        record.quota_energia = null;
+        record.prezzo_unitario_energia = null;
     } else {
         record.lettura = parseInt(document.getElementById("bill-reading").value) || 0;
     }
@@ -1145,6 +1174,8 @@ function editBill(utility, index) {
         document.getElementById("bill-f2").value = bill.lettura_f2 || 0;
         document.getElementById("bill-f3").value = bill.lettura_f3 || 0;
         document.getElementById("bill-luce-totale").value = bill.lettura_totale != null ? bill.lettura_totale : 0;
+    } else if (utility === "RIFIUTI") {
+        // nessun campo lettura per i rifiuti
     } else {
         document.getElementById("bill-reading").value = bill.lettura != null ? bill.lettura : 0;
     }
@@ -1328,11 +1359,14 @@ function renderDatiMancanti() {
 
     const oggi = new Date();
     const soglie = getSoglieDati();
+    // Bollette: tutte le utenze (RIFIUTI incluso). Letture: solo quelle col contatore.
     const utenze = [
         { key: "LUCE", nome: "Energia Elettrica" },
         { key: "GAS", nome: "Gas Naturale" },
-        { key: "ACQUA", nome: "Servizio Idrico" }
+        { key: "ACQUA", nome: "Servizio Idrico" },
+        { key: "RIFIUTI", nome: "Rifiuti (TARI)" }
     ];
+    const utenzeConLetture = utenze.filter(u => u.key !== "RIFIUTI");
 
     const righe = [];
 
@@ -1344,8 +1378,8 @@ function renderDatiMancanti() {
         }
     });
 
-    // Letture mensili mancanti (fino al mese limite dato dalla soglia).
-    utenze.forEach(u => {
+    // Letture mensili mancanti (solo utenze col contatore; i rifiuti non hanno letture).
+    utenzeConLetture.forEach(u => {
         const mesi = mesiLettureMancanti(u.key, oggi, soglie[u.key].letture);
         if (mesi.length > 0) {
             const elenco = mesi.map(formattaMeseAnno).join(", ");
@@ -1429,6 +1463,17 @@ function renderDashboard() {
         const tutte = bills[utility].filter(x => x.fattura > 0);
         // Filtra per ANNO DI COMPETENZA (periodo_fine), non per data di emissione.
         const list = tutte.filter(x => annoCompetenzaBolletta(x) === selectedYear);
+
+        // RIFIUTI (tassa): mostra il TOTALE speso nell'anno; nessun consumo.
+        if (utility === "RIFIUTI") {
+            const totRifiuti = list.reduce((s, x) => s + (x.fattura || 0), 0);
+            document.getElementById(kpiId).textContent = `€ ${totRifiuti.toFixed(2)}`;
+            document.getElementById(subId).textContent = list.length
+                ? `${list.length} bollett${list.length === 1 ? "a" : "e"} (TARI)`
+                : "Nessuna bolletta";
+            return;
+        }
+
         if (list.length > 0) {
             const last = list[list.length - 1];
             document.getElementById(kpiId).textContent = `€ ${last.fattura.toFixed(2)}`;
@@ -1461,25 +1506,27 @@ function renderDashboard() {
     updateKpi("LUCE", "kpi-spesa-luce", "kpi-consumo-luce", "kWh");
     updateKpi("GAS", "kpi-spesa-gas", "kpi-consumo-gas", "SMC");
     updateKpi("ACQUA", "kpi-spesa-acqua", "kpi-consumo-acqua", "m³");
+    updateKpi("RIFIUTI", "kpi-spesa-rifiuti", "kpi-consumo-rifiuti", "");
 
     // 3. Tabella Ultime Rilevazioni
     const activities = [];
     Object.keys(bills).forEach(ut => {
+        const isRifiuti = (ut === "RIFIUTI");
         bills[ut].forEach((b, idx) => {
             const readingVal = b.lettura_totale !== undefined ? b.lettura_totale : (b.lettura || 0);
             let partial = 0;
-            if (idx > 0) {
+            if (idx > 0 && !isRifiuti) {
                 const prevReading = bills[ut][idx - 1].lettura_totale !== undefined ? bills[ut][idx - 1].lettura_totale : (bills[ut][idx - 1].lettura || 0);
                 partial = readingVal - prevReading;
             }
-            
+
             activities.push({
                 data: b.data,
                 utenza: ut,
-                tipo: "Bolletta PDF",
+                tipo: isRifiuti ? "Bolletta TARI" : "Bolletta PDF",
                 valore: b.fattura ? `€ ${b.fattura.toFixed(2)}` : "Lettura stimata",
-                consumo: partial > 0 ? `${partial} ${ut === 'LUCE' ? 'kWh' : ut === 'GAS' ? 'SMC' : 'm³'}` : "-",
-                lettura: readingVal
+                consumo: (!isRifiuti && partial > 0) ? `${partial} ${unitForUtility(ut)}` : "-",
+                lettura: isRifiuti ? "—" : readingVal
             });
         });
     });
@@ -1544,7 +1591,7 @@ function renderDashboardCharts() {
     const labels = [];
     for (let m = 1; m <= 12; m++) {
         const key = `${annoGrafico}-${String(m).padStart(2, '0')}`;
-        speseMensili[key] = { LUCE: 0, GAS: 0, ACQUA: 0 };
+        speseMensili[key] = { LUCE: 0, GAS: 0, ACQUA: 0, RIFIUTI: 0 };
         labels.push(key);
     }
 
@@ -1573,11 +1620,12 @@ function renderDashboardCharts() {
     const datasetLuce = labels.map(lbl => speseMensili[lbl].LUCE);
     const datasetGas = labels.map(lbl => speseMensili[lbl].GAS);
     const datasetAcqua = labels.map(lbl => speseMensili[lbl].ACQUA);
+    const datasetRifiuti = labels.map(lbl => speseMensili[lbl].RIFIUTI);
 
     // --- GRAFICO SPESE ---
     const ctxSpese = document.getElementById("chart-spese").getContext("2d");
     if (state.charts.spese) state.charts.spese.destroy();
-    
+
     state.charts.spese = new Chart(ctxSpese, {
         type: "bar",
         data: {
@@ -1585,7 +1633,8 @@ function renderDashboardCharts() {
             datasets: [
                 { label: "Luce", data: datasetLuce, backgroundColor: "#eab308", borderRadius: 4 },
                 { label: "Gas", data: datasetGas, backgroundColor: "#f97316", borderRadius: 4 },
-                { label: "Acqua", data: datasetAcqua, backgroundColor: "#3b82f6", borderRadius: 4 }
+                { label: "Acqua", data: datasetAcqua, backgroundColor: "#3b82f6", borderRadius: 4 },
+                { label: "Rifiuti", data: datasetRifiuti, backgroundColor: "#22c55e", borderRadius: 4 }
             ]
         },
         options: {
@@ -1791,21 +1840,22 @@ function renderBillsTable() {
         const tr = document.createElement("tr");
         const amountDisplay = bill.fattura ? `€ ${bill.fattura.toFixed(2)}` : "-";
         
-        // Calcola il consumo periodo da bolletta
-        const utilityBills = state.data.bills[bill.utility];
-        const currentVal = bill.lettura_totale !== undefined ? bill.lettura_totale : (bill.lettura || 0);
+        // Calcola il consumo periodo da bolletta. RIFIUTI non ha contatore → "—".
         let consPeriodo = "-";
-        
-        // Trova l'indice nel database originale ordinato
-        const origList = [...utilityBills].sort((a,b) => a.data.localeCompare(b.data));
-        const matchingRecord = origList.find(x => x.data === bill.data);
-        const oIndex = origList.indexOf(matchingRecord);
-        if (oIndex > 0) {
-            const prev = origList[oIndex - 1];
-            const prevVal = prev.lettura_totale !== undefined ? prev.lettura_totale : (prev.lettura || 0);
-            const diff = currentVal - prevVal;
-            if (diff >= 0) {
-                consPeriodo = `${diff} ${bill.utility === 'LUCE' ? 'kWh' : bill.utility === 'GAS' ? 'SMC' : 'm³'}`;
+        if (bill.utility !== "RIFIUTI") {
+            const utilityBills = state.data.bills[bill.utility];
+            const currentVal = bill.lettura_totale !== undefined ? bill.lettura_totale : (bill.lettura || 0);
+            // Trova l'indice nel database originale ordinato
+            const origList = [...utilityBills].sort((a,b) => a.data.localeCompare(b.data));
+            const matchingRecord = origList.find(x => x.data === bill.data);
+            const oIndex = origList.indexOf(matchingRecord);
+            if (oIndex > 0) {
+                const prev = origList[oIndex - 1];
+                const prevVal = prev.lettura_totale !== undefined ? prev.lettura_totale : (prev.lettura || 0);
+                const diff = currentVal - prevVal;
+                if (diff >= 0) {
+                    consPeriodo = `${diff} ${unitForUtility(bill.utility)}`;
+                }
             }
         }
 
@@ -1823,13 +1873,17 @@ function renderBillsTable() {
         }
 
         const periodoDisplay = formattaPeriodo(bill);
+        // Lettura contatore mostrata: vuota per RIFIUTI (tassa, niente contatore).
+        const letturaDisplay = (bill.utility === "RIFIUTI")
+            ? "—"
+            : (bill.lettura_totale !== undefined ? bill.lettura_totale : (bill.lettura || 0));
 
         tr.innerHTML = `
             <td>${formatDate(bill.data)}</td>
             <td style="font-size:0.85rem;">${periodoDisplay}</td>
             <td><span class="badge ${badgeUtenzaClass(bill.utility)}">${bill.utility}</span></td>
             <td class="font-medium">${amountDisplay}</td>
-            <td>${currentVal}</td>
+            <td>${letturaDisplay}</td>
             <td>${consPeriodo}</td>
             <td>${tipoDisplay}</td>
             <td>${pdfDisplay}</td>
@@ -2717,13 +2771,13 @@ function currentYear() {
 }
 
 function unitForUtility(utility) {
-    return utility === "LUCE" ? "kWh" : utility === "GAS" ? "SMC" : "m³";
+    return utility === "LUCE" ? "kWh" : utility === "GAS" ? "SMC" : utility === "ACQUA" ? "m³" : "";
 }
 
-// Classe CSS del badge colorato per utenza (luce/gas/acqua → colore ufficiale).
+// Classe CSS del badge colorato per utenza (luce/gas/acqua/rifiuti → colore ufficiale).
 function badgeUtenzaClass(utility) {
     const u = (utility || "").toUpperCase();
-    return u === "LUCE" ? "badge-luce" : u === "GAS" ? "badge-gas" : u === "ACQUA" ? "badge-acqua" : "badge-secondary";
+    return u === "LUCE" ? "badge-luce" : u === "GAS" ? "badge-gas" : u === "ACQUA" ? "badge-acqua" : u === "RIFIUTI" ? "badge-rifiuti" : "badge-secondary";
 }
 
 // --- AUDIT CONSUMI: confronto consumo FATTURATO vs RILEVATO ---

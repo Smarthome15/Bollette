@@ -11,7 +11,9 @@ I dati vivono in `database/` (non versionata). I nomi usano sempre il **`db_pref
 {prefix}_man_{utenza}.json      → letture manuali  (es. UserA_man_gas.json)
 ```
 
-Le utenze sono `luce`, `gas`, `acqua`. Per costruire i path si usano gli helper del backend (`get_filename_only()` / `get_json_filepath()`), **mai a mano**.
+Le utenze sono `luce`, `gas`, `acqua` e `rifiuti`. Per costruire i path si usano gli helper del backend (`get_filename_only()` / `get_json_filepath()`), **mai a mano**.
+
+> **RIFIUTI (TARI)** è una **utenza solo-bollette**: esiste `UserA_rifiuti.json` ma **non** `UserA_man_rifiuti.json` (è una tassa, niente contatore/letture). Nel codice va incluso solo nei flussi-bollette ed escluso da letture/audit/prezzi/confronto-consumi — vedi [frontend](frontend.md).
 
 Ogni file è un **array di record ordinato per `data`**. Non c'è un DB: `POST /api/save` riceve e riscrive l'array completo, non un delta. L'ordinamento cronologico crescente è un requisito (vedi sotto, calcolo dei consumi).
 

@@ -239,6 +239,16 @@
                             <span class="kpi-sub" id="kpi-consumo-acqua">0 m³</span>
                         </div>
                     </div>
+                    <div class="glass-card kpi-card rifiuti">
+                        <div class="kpi-icon-wrapper">
+                            <i data-lucide="recycle"></i>
+                        </div>
+                        <div class="kpi-info">
+                            <span class="kpi-title">Rifiuti / TARI (Anno)</span>
+                            <span class="kpi-value" id="kpi-spesa-rifiuti">€ 0.00</span>
+                            <span class="kpi-sub" id="kpi-consumo-rifiuti">Nessuna bolletta</span>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Grafici Dashboard -->
@@ -343,6 +353,7 @@
                                             <option value="LUCE">💡 Luce (Energia)</option>
                                             <option value="GAS">🔥 Gas Naturale</option>
                                             <option value="ACQUA">💧 Acqua (Idrico)</option>
+                                            <option value="RIFIUTI">♻️ Rifiuti (TARI)</option>
                                         </select>
                                     </div>
                                     <div class="form-group col-6">
@@ -457,6 +468,7 @@
                             <button class="filter-btn" data-utility="LUCE">Luce</button>
                             <button class="filter-btn" data-utility="GAS">Gas</button>
                             <button class="filter-btn" data-utility="ACQUA">Acqua</button>
+                            <button class="filter-btn" data-utility="RIFIUTI">Rifiuti</button>
                         </div>
                     </div>
                     <div class="filter-group flex-wrap gap-2 mt-2" style="align-items:center;">
@@ -880,6 +892,11 @@
                                 <div class="form-group col-4"><label>💧 Servizio Idrico</label></div>
                                 <div class="form-group col-4"><input type="number" id="soglia-acqua-bollette" min="1" max="24" step="1" value="3"></div>
                                 <div class="form-group col-4"><input type="number" id="soglia-acqua-letture" min="1" max="24" step="1" value="1"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group col-4"><label>♻️ Rifiuti (TARI)</label></div>
+                                <div class="form-group col-4"><input type="number" id="soglia-rifiuti-bollette" min="1" max="24" step="1" value="12"></div>
+                                <div class="form-group col-4"><span class="help-text">nessuna lettura</span></div>
                             </div>
                             <button id="btn-save-soglie" class="btn-primary mt-3">
                                 <i data-lucide="check-circle-2"></i>

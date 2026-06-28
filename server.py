@@ -59,8 +59,10 @@ def analizza_stato_sincronizzazione_utente(utente: str):
     richiede_risoluzione = False
     report = {"stato": "online", "dettagli": {}}
 
-    for utenza in ["LUCE", "GAS", "ACQUA"]:
-        for is_manual in [False, True]:
+    for utenza in ["LUCE", "GAS", "ACQUA", "RIFIUTI"]:
+        # RIFIUTI è una tassa: solo bollette, nessun file di letture manuali (_man).
+        modalita = [False] if utenza == "RIFIUTI" else [False, True]
+        for is_manual in modalita:
             nome_file = get_filename_only(utente, utenza, is_manual)
             path_locale = os.path.join(DB_DIR_LOCALE, nome_file)
             path_remoto = os.path.join(DB_DIR_REMOTA, nome_file)
@@ -111,7 +113,7 @@ def esegui_azione_sincronizzazione(utente: str, azione: str, chiave_specifica: s
     if chiave_specifica:
         chiavi = [chiave_specifica]
     else:
-        chiavi = ["LUCE", "LUCE_MAN", "GAS", "GAS_MAN", "ACQUA", "ACQUA_MAN"]
+        chiavi = ["LUCE", "LUCE_MAN", "GAS", "GAS_MAN", "ACQUA", "ACQUA_MAN", "RIFIUTI"]
         
     try:
         for chiave in chiavi:
@@ -401,6 +403,16 @@ def parse_pdf_gemini(text: str, utility_type: str):
             - lettura_f2: valore lettura contatore fascia F2 (intero, null se assente).
             - lettura_f3: valore lettura contatore fascia F3 (intero, null se assente).
             - lettura_totale: valore lettura totale contatore (intero, null se assente).
+            """
+        elif utility_type.upper() == "RIFIUTI":
+            prompt += """
+
+            NOTA RIFIUTI (TARI): è una tassa fissa sui rifiuti, NON ha contatore né consumo.
+            Estrai SOLO: data, periodo_inizio, periodo_fine e fattura (l'importo da pagare).
+            Per periodo_inizio/periodo_fine usa la sezione "Periodo di riferimento"
+            (es. "Periodo di riferimento GG/MM/AAAA - GG/MM/AAAA"). Metti null su
+            consumo_fatturato, quota_fissa, quota_energia, prezzo_unitario_energia e non
+            inventare alcuna lettura del contatore.
             """
         else:
             prompt += """
