@@ -687,9 +687,15 @@ routes = [
     Route("/api/app/publish", api_app_publish, methods=["POST"]),
     # Serviamo i file PDF archiviati
     Mount("/database/pdfs", StaticFiles(directory=PDF_DIR), name="pdfs"),
-    # Serviamo il frontend statico
-    Mount("/", StaticFiles(directory="static", html=True), name="static"),
 ]
+
+# Serviamo il frontend statico SOLO se la cartella static/ è presente. Così lo stesso
+# server.py può girare anche come "solo servizio di salvataggio" (es. su un PC dove
+# l'interfaccia è servita da Home Assistant), senza la cartella static/ e senza crashare.
+if os.path.isdir("static"):
+    routes.append(Mount("/", StaticFiles(directory="static", html=True), name="static"))
+else:
+    print("NOTA: cartella 'static/' assente → il server espone solo le API (frontend servito altrove, es. Home Assistant).")
 
 # Middleware no-cache: impedisce al browser di servire una versione vecchia del
 # frontend (index.html, app.js, app.css) dopo un aggiornamento del codice. Si applica

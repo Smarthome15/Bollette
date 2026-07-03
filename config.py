@@ -20,7 +20,9 @@ APP_DIR_REMOTA = os.path.dirname(DB_DIR_REMOTA)
 # virtuale, metadati di versionamento, cache, configurazioni dell'assistente e
 # i backup del NAS (non devono finire né nel confronto né nella copia).
 # I nomi sono confrontati a livello di singolo segmento di path.
-APP_SYNC_ESCLUSI = {"database", ".venv", ".git", "__pycache__", ".claude", ".idea", ".vscode", "backup_nas"}
+# 'install' e 'prepara_install.bat' servono a portare il backend su un altro PC:
+# NON fanno parte dell'app servita da Home Assistant, quindi restano fuori dal NAS.
+APP_SYNC_ESCLUSI = {"database", ".venv", ".git", "__pycache__", ".claude", ".idea", ".vscode", "backup_nas", "install", "prepara_install.bat"}
 
 # Estensioni di file da ignorare sempre (rumore: bytecode, file temporanei).
 APP_SYNC_EST_ESCLUSE = {".pyc", ".pyo", ".log", ".tmp"}
