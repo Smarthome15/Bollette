@@ -133,7 +133,7 @@ Dashboard filtro Anno + fix trend/consumi; import backup sicuro; guardie Letture
 - **Fix layout mobile/app companion**: blocco ANTI-OVERFLOW in `app.css` (vedi sezione frontend), form impilati, wrap di filtri/badge.
 - **Grafico Consumo Storico Annuale**: aggiunta barra verde **Rifiuti/TARI = spesa annua €** per competenza.
 - **Bacheca inter-progetto** con i Claude di Jarvis e F.A.M.ilia (vedi Convenzioni).
-- **Backend come add-on HA** (`addon/bollette_backend/`): codice pronto, consegnato in `\\192.168.1.15\addons`, `MODALITA_ADDON` nel backend, `apiBaseUrl` auto verso `<host>:8000`, endpoint `/api/health`. **Manca solo l'installazione dalla UI di HA** (Store add-on → Verifica aggiornamenti → Installa, chiave Gemini nelle options, Avvia). Vincoli concordati con Jarvis in bacheca (archivio 11/07/2026).
+- **Backend come add-on HA** (`addon/bollette_backend/`, v1.0.3): **INSTALLATO E IN SERVIZIO** dalla sera dell'11/07/2026 — `http://192.168.1.15:8000`, health `{ok, addon: true, gemini: true}`, watchdog+autostart attivi, chiave nelle options. `MODALITA_ADDON` nel backend, `apiBaseUrl` auto verso `<host>:8000`, endpoint `/api/health`. Trappola risolta: sul Pi la cartella è `www/Bollette` (**B maiuscola**, Linux case-sensitive; da SMB non si vede — `run.sh` prova entrambe). Vincoli concordati con Jarvis in bacheca (archivio 11/07/2026). Prossimo giro concordato: **scrittura atomica dei JSON** (tmp + rename).
 
 ### Lavori del 21/06/2026 — poi committati e pubblicati (nota storica)
 
