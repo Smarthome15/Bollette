@@ -848,6 +848,18 @@ async function handlePdfSelected(file) {
         return;
     }
 
+    // Verifica che il file sia DAVVERO leggibile prima di spedirlo: un PDF scelto
+    // da un provider cloud (es. Google Drive non scaricato sul telefono) arriva
+    // alla webview della companion come segnaposto illeggibile e la richiesta
+    // muore prima di partire — dando la colpa, ingiustamente, al server.
+    try {
+        if (!file || !file.size) throw new Error("file vuoto");
+        await file.slice(0, 16).arrayBuffer();
+    } catch (e) {
+        blockPdfInsertion("Il PDF non è leggibile dal dispositivo (es. file su Google Drive non ancora scaricato). Scaricalo sul telefono, poi riprova da lì.");
+        return;
+    }
+
     // Mostra lo stato di elaborazione, ma NON agganciare ancora il PDF né l'anteprima:
     // lo facciamo solo se Gemini risponde con successo.
     state.tempPdfFile = file;
