@@ -7,6 +7,14 @@ DB_DIR_LOCALE = "database"
 # Il percorso di rete SMB verso la cartella www di Home Assistant (NAS)
 DB_DIR_REMOTA = r"\\192.168.1.15\config\www\bollette\database"
 
+# --- Modalità ADD-ON (backend dentro Home Assistant OS sul Raspberry) ---
+# Quando il backend gira come add-on HA (il run.sh dell'add-on esporta
+# BOLLETTE_ADDON=1) NON esiste un "NAS remoto" da specchiare: la cartella dati
+# locale È quella che dal PC chiamiamo remota. Il flag spegne sync/mirroring e
+# neutralizza i percorsi UNC Windows qui sopra (che su Linux verrebbero
+# interpretati come path RELATIVI, creando cartelle spurie "\\192.168.1.15\...").
+MODALITA_ADDON = os.environ.get("BOLLETTE_ADDON", "") == "1"
+
 # --- Percorsi per il confronto del CODICE dell'applicazione (locale vs NAS) ---
 # Radice locale dell'app: la cartella che contiene questo config.py (robusto
 # indipendentemente dalla cartella di lavoro da cui viene avviato il server).
@@ -22,7 +30,9 @@ APP_DIR_REMOTA = os.path.dirname(DB_DIR_REMOTA)
 # I nomi sono confrontati a livello di singolo segmento di path.
 # 'install' e 'prepara_install.bat' servono a portare il backend su un altro PC:
 # NON fanno parte dell'app servita da Home Assistant, quindi restano fuori dal NAS.
-APP_SYNC_ESCLUSI = {"database", ".venv", ".git", "__pycache__", ".claude", ".idea", ".vscode", "backup_nas", "install", "prepara_install.bat"}
+# 'addon' contiene i file dell'add-on HA: si consegna in \\NAS\addons (vedi
+# addon/deploy_addon.ps1), non nella cartella www dell'app.
+APP_SYNC_ESCLUSI = {"database", ".venv", ".git", "__pycache__", ".claude", ".idea", ".vscode", "backup_nas", "install", "prepara_install.bat", "addon"}
 
 # Estensioni di file da ignorare sempre (rumore: bytecode, file temporanei).
 APP_SYNC_EST_ESCLUSE = {".pyc", ".pyo", ".log", ".tmp"}

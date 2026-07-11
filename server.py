@@ -23,11 +23,18 @@ import pdfplumber
 from config import (
     UTENTI_CONFIG, API_KEY_GEMINI, DB_DIR_LOCALE, PDF_DIR, DB_DIR_REMOTA,
     APP_DIR_LOCALE, APP_DIR_REMOTA, APP_SYNC_ESCLUSI, APP_SYNC_EST_ESCLUSE,
-    APP_BACKUP_DIR
+    APP_BACKUP_DIR, MODALITA_ADDON
 )
 
 # --- UTILITIES DI SINCRONIZZAZIONE NAS ---
 def connessione_nas_attiva():
+    # In modalità add-on il backend GIRA sul NAS: non c'è nessun "remoto" da
+    # specchiare, e i percorsi UNC di config.py su Linux sarebbero interpretati
+    # come path relativi (cartelle spurie). Tutti i flussi di sync degradano
+    # quindi al comportamento "NAS offline", che è già gestito ovunque.
+    if MODALITA_ADDON:
+        return False
+
     ip_nas = "192.168.1.15"
     porta_samba = 445  # Porta standard SMB
     timeout_secondi = 2.0  # Timeout rapido per non piantare il server
@@ -192,6 +199,18 @@ def analizza_stato_applicazione():
     # Confronta APP_DIR_LOCALE con APP_DIR_REMOTA file per file.
     # Ritorna (richiede_attenzione, report). Lo stato per ciascun file è uno di:
     #   identico / diverso / solo_locale / solo_remoto.
+
+    # Modalità add-on: l'app in esecuzione È la copia "di produzione" sul NAS.
+    # Equivale al caso stessa_radice: niente da confrontare, nessuna attenzione.
+    if MODALITA_ADDON:
+        return False, {
+            "stato": "online",
+            "stessa_radice": True,
+            "remoto_presente": True,
+            "dettagli": [],
+            "riepilogo": {"identici": 0, "diversi": 0, "solo_locale": 0, "solo_remoto": 0}
+        }
+
     if not connessione_nas_attiva():
         return False, {"stato": "offline", "dettagli": [], "riepilogo": {}}
 
@@ -294,6 +313,12 @@ def pubblica_app_su_nas():
     # Rispetta le esclusioni (database/, .venv/, .git/, __pycache__/, ...): i DATI
     # non vengono mai toccati. Prima di scrivere salva un backup locale del NAS.
     # Restituisce (successo, report_azioni).
+
+    # Modalità add-on: l'app gira già dalla cartella sul NAS. La pubblicazione
+    # del codice si fa dal PC di sviluppo (che vede il NAS via SMB), non da qui.
+    if MODALITA_ADDON:
+        return False, {"errore": "L'app gira già sul NAS (add-on Home Assistant): la pubblicazione del codice si fa dal PC di sviluppo."}
+
     if not connessione_nas_attiva():
         return False, {"errore": "NAS non raggiungibile."}
 
@@ -648,6 +673,16 @@ async def api_sync_resolve(request: Request):
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
+async def api_health(request: Request):
+    # Endpoint minimo per il watchdog dell'add-on e per la diagnostica: 200 se il
+    # processo è vivo. 'gemini' dice se la chiave è configurata (utile per capire
+    # al volo perché l'estrazione PDF risulta bloccata).
+    return JSONResponse({
+        "ok": True,
+        "addon": MODALITA_ADDON,
+        "gemini": bool(API_KEY_GEMINI)
+    })
+
 async def api_app_status(request: Request):
     # Confronto del CODICE dell'applicazione locale vs NAS (sola lettura).
     try:
@@ -683,6 +718,7 @@ routes = [
     Route("/api/parse-pdf", api_parse_pdf, methods=["POST"]),
     Route("/api/sync/status", api_sync_status, methods=["GET"]),
     Route("/api/sync/resolve", api_sync_resolve, methods=["POST"]),
+    Route("/api/health", api_health, methods=["GET"]),
     Route("/api/app/status", api_app_status, methods=["GET"]),
     Route("/api/app/publish", api_app_publish, methods=["POST"]),
     # Serviamo i file PDF archiviati

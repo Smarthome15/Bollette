@@ -112,12 +112,16 @@ function initSettings() {
     } else if (window.location.port === "8000") {
         // L'app è servita dallo stesso backend Python: usa percorso relativo.
         state.apiBaseUrl = "";
+    } else if (/^https?:$/.test(window.location.protocol) && window.location.hostname) {
+        // App servita altrove (tipicamente Home Assistant su :8123) e nessun indirizzo
+        // configurato: col backend come ADD-ON, il backend gira sullo STESSO host di HA
+        // → proviamo <host>:8000. Se l'add-on non risponde, loadData() degrada comunque
+        // alla lettura dei JSON statici (sola lettura), come prima. Un indirizzo salvato
+        // in Impostazioni ha sempre la precedenza (es. backend sul PC di sviluppo).
+        state.apiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
     } else {
-        // App servita altrove (es. Home Assistant su :8123) e nessun indirizzo backend
-        // configurato. NON indoviniamo l'host (il backend è su un'altra macchina, es. il
-        // PC): restiamo relativi così, se il backend non risponde, scatta il fallback di
-        // lettura dei JSON statici serviti da HA. Per inserire/salvare imposta l'indirizzo
-        // del PC (es. http://192.168.1.11:8000) in Impostazioni.
+        // Pagina aperta da file:// o contesto senza host: resta relativo (fallback
+        // localStorage in loadData).
         state.apiBaseUrl = "";
     }
 

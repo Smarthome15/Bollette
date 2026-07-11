@@ -49,7 +49,7 @@ Non esiste una suite di test né linter configurati. Per verificare una modifica
 
 Due metà che comunicano solo via API REST JSON — **nessun framework frontend, nessun build step**: il frontend è HTML/CSS/JS statico servito da Starlette.
 
-- **Backend** — `server.py`: app Starlette (ASGI) servita da uvicorn. Espone gli endpoint `/api/*`, monta i PDF archiviati su `/database/pdfs`, e monta `static/` come root del sito. CORS è aperto a `*` apposta per permettere a Home Assistant (porta 8123) di chiamare le API. `config.py` definisce utenti/ruoli, percorsi e i percorsi app locale/remota; **la chiave Gemini NON è in `config.py`** (vedi sotto "Chiave Gemini").
+- **Backend** — `server.py`: app Starlette (ASGI) servita da uvicorn. Espone gli endpoint `/api/*` (incluso `GET /api/health` per watchdog/diagnostica), monta i PDF archiviati su `/database/pdfs`, e monta `static/` come root del sito. CORS è aperto a `*` apposta per permettere a Home Assistant (porta 8123) di chiamare le API. `config.py` definisce utenti/ruoli, percorsi e i percorsi app locale/remota; **la chiave Gemini NON è in `config.py`** (vedi sotto "Chiave Gemini"). Con **`BOLLETTE_ADDON=1`** nell'ambiente (`MODALITA_ADDON` in `config.py`, usato dall'add-on HA in `addon/`) il backend spegne sync/mirroring NAS e pubblicazione: sta già girando sul NAS.
 - **Frontend** — `static/index.html` (markup + tab), `static/app.js` (tutta la logica, single-file, basata su un oggetto globale `state`), `static/app.css`. Chart.js e Lucide arrivano da CDN.
 
 ### Modello dati (la cosa più importante da capire)
@@ -95,7 +95,7 @@ I dati vivono in file JSON in `database/`, **un file per ogni combinazione utent
 
 - **Login**: si sceglie solo il profilo, **senza password** (`handleLogin` + `PROFILI_UTENTE` in `app.js`). È tutto lato client, quindi funziona anche col backend spento. Il profilo determina il `prefix` dei file dati. (L'endpoint `/api/login` esiste ancora ma non è più usato dal frontend.)
 - **`state.storageMode`** (salvato in `localStorage`): `server` usa le API; `local` usa solo `localStorage` del browser (parsing PDF disattivato, scritture accodate).
-- **`apiBaseUrl`** (`initSettings`): se l'utente ha salvato un indirizzo in Impostazioni lo usa; se la pagina è su porta 8000 resta relativo; **altrimenti (es. servito da HA su 8123) resta relativo** e NON assume più `<host>:8000` (che puntava erroneamente al NAS). Per inserire/salvare da HA va impostato a mano l'indirizzo del PC dove gira il backend (es. `http://192.168.1.165:8000`, IP reale attuale — DHCP, può cambiare); se non impostato e il backend non risponde, `loadData()` legge i JSON statici serviti da HA (sola lettura) e l'app mostra un **avviso** (in Impostazioni + hint rosso sotto lo status) che spiega come configurare l'indirizzo.
+- **`apiBaseUrl`** (`initSettings`): un indirizzo salvato in Impostazioni ha sempre la **precedenza** (es. backend sul PC di sviluppo); pagina su porta 8000 → relativo; **altrimenti (es. servito da HA su 8123) prova `<host>:8000`** — dal trasloco del backend come **add-on HA** (11/07/2026), backend e HA vivono sullo stesso host, quindi da HA funziona tutto senza configurare nulla. Se su `<host>:8000` non risponde niente, `loadData()` degrada come prima ai JSON statici (sola lettura, hint rosso sotto lo status); pagina aperta da `file://` → resta relativo (fallback `localStorage`).
 
 ### Controllo codice app e pubblicazione sul NAS
 
@@ -116,11 +116,11 @@ Il backend specchia ogni salvataggio sul NAS Home Assistant via SMB (`DB_DIR_REM
 
 ## Infrastruttura reale (rete)
 
-- **HA / NAS = `192.168.1.15`** (Home Assistant OS su Raspberry Pi). Serve l'app come file **statici** da `/config/www/bollette` sulla porta **8123**; **NON esegue Python**.
-- **Backend Python = su un PC della LAN** (IP reale attuale `192.168.1.165:8000`, via DHCP → può cambiare al riavvio), avviato a mano con `run.bat`/`.venv`. Previsti ~3 PC, ognuno col **proprio profilo/dati** (file separati per `db_prefix`), quindi nessuna sovrascrittura tra loro. Il backend **non è un servizio**: vive finché la finestra di `run.bat` resta aperta.
-- Accesso da HA: col PC acceso → tutto (incl. inserimento PDF via Gemini); col PC spento → login + **sola lettura** dei dati statici serviti da HA.
+- **HA / NAS = `192.168.1.15`** (Home Assistant OS su Raspberry Pi, ~4 GB RAM). Serve l'app come file **statici** da `/config/www/bollette` sulla porta **8123** e — dall'11/07/2026 — esegue il **backend come add-on locale** ("Bollette Backend", porta **8000** sullo stesso IP, boot auto + watchdog; vedi `addon/` e [deploy-nas](docs/deploy-nas.md)). Con l'add-on attivo il PC non serve più: l'app completa risponde su `http://192.168.1.15:8000` e i dati vivono SOLO sul Pi (`/config/www/bollette/database`, inclusi nei backup HA).
+- **Backend Python su PC** (modalità sviluppo/riserva): `run.bat`/`.venv`, IP DHCP (es. `192.168.1.165:8000`). Resta la macchina da cui si **pubblica il codice** sul NAS e una copia di riserva dei dati (al login scarica dal NAS).
+- Accesso da HA (8123): con l'add-on attivo → tutto (il frontend punta da solo a `<host>:8000`, incl. PDF via Gemini); con tutto spento → login + **sola lettura** dei dati statici.
 
-## Stato attuale e prossimi passi (giugno 2026)
+## Stato attuale e prossimi passi (luglio 2026)
 
 Fatto e in produzione (committato su `main`, pubblicato sul NAS): scheda Audit fatturato vs rilevato (matching mensile); controllo/pubblicazione codice app; estrazione PDF solo-Gemini con blocco offline; chiave fuori dal codice; login senza password; `apiBaseUrl` corretto per HA; `run.bat` migliorato.
 
@@ -128,9 +128,16 @@ Fatto e in produzione (committato su `main`, pubblicato sul NAS): scheda Audit f
 
 Dashboard filtro Anno + fix trend/consumi; import backup sicuro; guardie Letture (commit `5b6f1d1`). Nuova tab **Andamento Prezzi** + estrazione `quota_fissa`/`quota_energia`/`prezzo_unitario_energia` da Gemini, e documentazione `docs/` (commit `f301de2`). **Dati UserA sul NAS** già aggiornati: correzione luce F1 31/12/2024 (333→339, tot 1086); periodi/`consumo_fatturato` popolati su tutte le bollette storiche. Backup in `backup_nas/` (`fix_luce_F1_…`, `fix_audit_periodi_…`).
 
-### Lavori del 21/06/2026 — IN LOCALE, da testare e poi committare/pubblicare
+### Lavori dell'11/07/2026 — committati e pubblicati (add-on: da installare)
 
-Non ancora committati (`static/app.js`, `static/index.html`, `static/app.css`, `server.py`, doc): 
+- **Fix layout mobile/app companion**: blocco ANTI-OVERFLOW in `app.css` (vedi sezione frontend), form impilati, wrap di filtri/badge.
+- **Grafico Consumo Storico Annuale**: aggiunta barra verde **Rifiuti/TARI = spesa annua €** per competenza.
+- **Bacheca inter-progetto** con i Claude di Jarvis e F.A.M.ilia (vedi Convenzioni).
+- **Backend come add-on HA** (`addon/bollette_backend/`): codice pronto, consegnato in `\\192.168.1.15\addons`, `MODALITA_ADDON` nel backend, `apiBaseUrl` auto verso `<host>:8000`, endpoint `/api/health`. **Manca solo l'installazione dalla UI di HA** (Store add-on → Verifica aggiornamenti → Installa, chiave Gemini nelle options, Avvia). Vincoli concordati con Jarvis in bacheca (archivio 11/07/2026).
+
+### Lavori del 21/06/2026 — poi committati e pubblicati (nota storica)
+
+(All'epoca in locale, poi tutti committati e pubblicati.) Riguardavano `static/app.js`, `static/index.html`, `static/app.css`, `server.py`, doc: 
 - **Dashboard**: grafico **Consumi Mensili**; riquadro **promemoria dati mancanti** con **soglie configurabili per utenza** (Impostazioni).
 - **Tabelle Bollette/Letture**: colonna **Periodo** + **filtro intervallo date** + **pulsante Modifica** (oltre a Elimina) che riusa il form di inserimento.
 - **Fix concettuale importante**: grafici e KPI ora usano il **periodo di competenza** (non la `data` di emissione) — vedi principio nel modello dati. 
@@ -154,6 +161,6 @@ Non ancora committati (`static/app.js`, `static/index.html`, `static/app.css`, `
 10. **Colori**: gas arancione, acqua blu, luce gialla — coerenti in KPI, grafici e badge utenza nelle tabelle.
 
 Piste aperte (non ancora fatte), per quando si riprende:
-- **Backend come add-on di Home Assistant** (HA OS è un sistema chiuso: niente systemd libero) per non dipendere da un PC acceso. È il passo "serio" verso il deploy stabile, soprattutto se si vuole l'accesso da fuori via **DuckDNS + NGINX** (in tal caso instradare `/api` same-origin per evitare mixed-content/CORS).
-- **IP statico del PC** sul router, altrimenti l'indirizzo backend nelle Impostazioni va riaggiornato se cambia.
+- **Accesso da fuori casa** via **DuckDNS + NGINX** o Nabu Casa/Ingress sopra l'add-on (in tal caso instradare `/api` same-origin per evitare mixed-content/CORS).
+- **Rafforzare la catena di backup dei dati** ora che il Pi è l'unica fonte di verità (vedi vincolo segnalato da Jarvis in bacheca, 11/07/2026: Google Drive Backup settimanale ×2 copie, 1,5 GB liberi su Drive).
 - **Chiave Gemini**: gestita dall'utente su Google AI Studio; la vecchia chiave (non valida) resta nella storia git ma è inattiva. La chiave attiva vive in `secrets_local.py` (non versionato); su una macchina nuova si recupera dal NAS (`\\192.168.1.15\config\www\bollette\secrets_local.py`).
