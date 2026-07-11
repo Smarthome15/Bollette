@@ -19,10 +19,11 @@ if (-not (Test-Path $shareRoot)) {
 
 New-Item -ItemType Directory -Force $dest | Out-Null
 
-Copy-Item (Join-Path $srcAddon 'config.yaml') $dest -Force
-Copy-Item (Join-Path $srcAddon 'Dockerfile')  $dest -Force
-Copy-Item (Join-Path $srcAddon 'run.sh')      $dest -Force
-Copy-Item (Join-Path $srcAddon 'README.md')   $dest -Force
+Copy-Item (Join-Path $srcAddon 'config.yaml')  $dest -Force
+Copy-Item (Join-Path $srcAddon 'Dockerfile')   $dest -Force
+Copy-Item (Join-Path $srcAddon 'run.sh')       $dest -Force
+Copy-Item (Join-Path $srcAddon 'README.md')    $dest -Force
+Copy-Item (Join-Path $srcAddon 'CHANGELOG.md') $dest -Force
 # La fonte di verita' delle dipendenze e' il requirements.txt del repo.
 Copy-Item (Join-Path $repo 'requirements.txt') $dest -Force
 
