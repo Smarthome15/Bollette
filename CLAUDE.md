@@ -112,6 +112,7 @@ Il backend specchia ogni salvataggio sul NAS Home Assistant via SMB (`DB_DIR_REM
 - I nomi file/JSON usano sempre il `db_prefix` anonimo, **mai lo username in chiaro**. Per i path usare gli helper `get_filename_only()` / `get_json_filepath()`, non costruirli a mano.
 - **Non versionati** (vedi `.gitignore`): `database/` (dati + `database/pdfs/`, ricreata all'avvio), `secrets_local.py` (chiave Gemini), `backup_nas/` (backup del NAS pre-pubblicazione).
 - Aggiungere un utente = voce in `UTENTI_CONFIG` (`config.py`, backend) **e** in `PROFILI_UTENTE` (`app.js`, login lato client), con lo stesso `db_prefix`.
+- **Bacheca inter-progetto con Jarvis** (`C:\Dev\Jarvis\collab\bacheca.md`, regole in testa al file): quando una decisione o un piano di questo progetto tocca il Raspberry/Home Assistant o interessa Jarvis (es. il backend come add-on HA), va scritta una voce lì; a inizio lavoro controllare se ci sono risposte (`STATO: RISPOSTA`) alle voci di Bollette. Comando rapido: `/bacheca`.
 
 ## Infrastruttura reale (rete)
 
