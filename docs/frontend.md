@@ -43,7 +43,7 @@ Panoramica: promemoria dati mancanti, KPI di spesa, grafici, ultime operazioni.
 - **Trend a pari periodo**: per l'anno in corso confronta gen→mese corrente vs gli stessi mesi dell'anno prima; per un anno passato confronta l'anno intero vs quello precedente. Evita i crolli fittizi del confronto "anno parziale vs anno intero". Calcolato per **competenza** (vedi principio sopra).
 - **Grafico "Andamento Spese Mensili"** — spesa per mese dell'anno selezionato, attribuita al mese di **competenza** della bolletta.
 - **Grafico "Andamento Consumi Mensili"** (`state.charts.consumiMensili`) — consumo per mese dell'anno selezionato, dalle **autoletture** (differenza tra lettura del mese e mese-base precedente); 3 utenze a barre affiancate (unità diverse: kWh/SMC/m³).
-- **Grafico "Consumo Storico Annuale"** — dalle autoletture, ripartizione **pro-rata sui giorni** a cavallo d'anno.
+- **Grafico "Consumo Storico Annuale"** — dalle autoletture, ripartizione **pro-rata sui giorni** a cavallo d'anno. Include anche **Rifiuti/TARI** come **spesa annua in €** (barra verde, anno di competenza via `annoCompetenzaBolletta`, stesso criterio del KPI): non avendo contatore non ha un consumo, ma così il rincaro della tassa resta confrontabile anno su anno.
 
 ### 2. Bollette PDF — `renderBillsTable`, `saveNewBill`, `prefillBillForm`, `openPdfModal`, `editBill`, `deleteBill`, `handlePdfSelected`
 Storico bollette, inserimento (manuale o da PDF via Gemini), apertura del PDF e del dettaglio, **modifica** ed eliminazione. La tabella ha una colonna **Periodo** (inizio→fine, helper `formattaPeriodo`), un **filtro intervallo date** (dal/al + Azzera, helper `filtraPerIntervallo`) oltre al filtro per utenza, e una colonna **Azioni** con i pulsanti Modifica/Elimina.

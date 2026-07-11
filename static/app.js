@@ -1772,6 +1772,19 @@ function renderDashboardCharts() {
     calcolaConsumoAnnuo("GAS", consGasAnnuo);
     calcolaConsumoAnnuo("ACQUA", consAcquaAnnuo);
 
+    // RIFIUTI (TARI) non ha contatore né consumo: nel grafico annuale entra come
+    // SPESA annua in €, attribuita all'anno di COMPETENZA della bolletta
+    // (periodo_fine, fallback data) — stesso criterio del KPI Rifiuti.
+    const spesaRifiutiAnnua = [0, 0, 0];
+    (bills.RIFIUTI || []).forEach(b => {
+        if (!b.fattura) return;
+        const yearIdx = years.indexOf(annoCompetenzaBolletta(b));
+        if (yearIdx !== -1) spesaRifiutiAnnua[yearIdx] += b.fattura;
+    });
+    for (let i = 0; i < spesaRifiutiAnnua.length; i++) {
+        spesaRifiutiAnnua[i] = Math.round(spesaRifiutiAnnua[i]);
+    }
+
     const ctxConsumi = document.getElementById("chart-consumi").getContext("2d");
     if (state.charts.consumi) state.charts.consumi.destroy();
 
@@ -1782,7 +1795,8 @@ function renderDashboardCharts() {
             datasets: [
                 { label: "Luce (kWh)", data: consLuceAnnuo, backgroundColor: "rgba(234, 179, 8, 0.7)", borderColor: "#eab308", borderWidth: 1 },
                 { label: "Gas (SMC)", data: consGasAnnuo, backgroundColor: "rgba(249, 115, 22, 0.7)", borderColor: "#f97316", borderWidth: 1 },
-                { label: "Acqua (m³)", data: consAcquaAnnuo, backgroundColor: "rgba(59, 130, 246, 0.7)", borderColor: "#3b82f6", borderWidth: 1 }
+                { label: "Acqua (m³)", data: consAcquaAnnuo, backgroundColor: "rgba(59, 130, 246, 0.7)", borderColor: "#3b82f6", borderWidth: 1 },
+                { label: "Rifiuti/TARI (€)", data: spesaRifiutiAnnua, backgroundColor: "rgba(34, 197, 94, 0.7)", borderColor: "#22c55e", borderWidth: 1 }
             ]
         },
         options: {
