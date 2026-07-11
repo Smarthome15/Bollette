@@ -14,13 +14,27 @@ export BOLLETTE_ADDON=1
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONUNBUFFERED=1
 
-# Il codice dell'app vive nella config HA (montata in /homeassistant), NON
-# dentro l'add-on: è la stessa cartella aggiornata con "Pubblica su NAS".
-APP_DIR=/homeassistant/www/bollette
+# Il codice dell'app vive nella config di HA, NON dentro l'add-on: è la stessa
+# cartella aggiornata con "Pubblica su NAS". A seconda della versione del
+# Supervisor la config è montata in /homeassistant (mapping moderno
+# homeassistant_config) oppure in /config (mapping storico): proviamo entrambe.
+APP_DIR=""
+for cand in /homeassistant/www/bollette /config/www/bollette; do
+    if [ -f "$cand/server.py" ]; then
+        APP_DIR="$cand"
+        break
+    fi
+done
 
-if [ ! -f "$APP_DIR/server.py" ]; then
-    echo "[bollette] ERRORE: $APP_DIR/server.py non trovato."
-    echo "[bollette] Pubblica prima il codice dell'app dal PC (Impostazioni -> Pubblica su NAS)."
+if [ -z "$APP_DIR" ]; then
+    echo "[bollette] ERRORE: server.py non trovato ne' in /homeassistant/www/bollette ne' in /config/www/bollette."
+    echo "[bollette] Se il codice non e' mai stato pubblicato: dal PC, Impostazioni -> Pubblica su NAS."
+    echo "[bollette] Diagnostica mount (da incollare in caso di problemi):"
+    echo "[bollette] --- ls / ---";                  ls -la / 2>/dev/null || true
+    echo "[bollette] --- ls /homeassistant ---";     ls -la /homeassistant 2>/dev/null || echo "  (non esiste)"
+    echo "[bollette] --- ls /homeassistant/www ---"; ls -la /homeassistant/www 2>/dev/null || echo "  (non esiste)"
+    echo "[bollette] --- ls /config ---";            ls -la /config 2>/dev/null || echo "  (non esiste)"
+    echo "[bollette] --- ls /config/www ---";        ls -la /config/www 2>/dev/null || echo "  (non esiste)"
     sleep 60   # niente crash-loop stretto del watchdog mentre si sistema
     exit 1
 fi
