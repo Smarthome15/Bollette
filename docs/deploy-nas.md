@@ -20,6 +20,7 @@ Principi di funzionamento:
 - **Vincoli concordati con Jarvis** (bacheca inter-progetto, voce archiviata dell'11/07/2026): `boot: auto` + `watchdog` TCP sulla 8000; access-log disattivato (`--no-access-log`, siamo su microSD; anche `PYTHONDONTWRITEBYTECODE=1` per non sporcare `www` di `__pycache__`); porta 8000 verificata libera sul Pi.
 - **Dati**: unica fonte di verità in `/config/www/bollette/database`, inclusa nei backup nativi HA. ⚠️ La catena backup del Pi (Google Drive Backup settimanale, 2 copie, ~1,5 GB liberi su Drive) è il punto debole segnalato da Jarvis: il PC che scarica dal NAS al login fa da copia di riserva aggiuntiva.
 - **Diagnostica**: `GET http://192.168.1.15:8000/api/health` → `{ok, addon, gemini}` (`gemini: false` = chiave mancante nelle options); log dell'add-on nella sua scheda UI.
+- ⚠️ **Maiuscole/minuscole**: sul filesystem del Pi la cartella reale è `www/Bollette` (**B maiuscola**). Da Windows/SMB la differenza non si vede (per questo `\\192.168.1.15\config\www\bollette` funziona), ma **Linux è case-sensitive**: dentro il container il percorso giusto è `/homeassistant/www/Bollette`. Il `run.sh` dell'add-on prova entrambe le grafie; se si creano riferimenti nuovi lato Pi (URL `/local/...`, script), usare la B maiuscola.
 
 ## Due sincronizzazioni distinte (da non confondere)
 

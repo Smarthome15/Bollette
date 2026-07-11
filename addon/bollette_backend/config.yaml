@@ -5,7 +5,7 @@
 # riavviare l'add-on = deploy. Vincoli concordati con Jarvis (11/07/2026):
 # boot auto + watchdog, chiave Gemini nelle options, log sobri.
 name: "Bollette Backend (ConsumiCasa)"
-version: "1.0.2"
+version: "1.0.3"
 slug: "bollette_backend"
 description: "Backend Python dell'app Bollette/ConsumiCasa: API, salvataggio JSON, estrazione bollette PDF via Gemini."
 url: "https://github.com/Smarthome15/Bollette"

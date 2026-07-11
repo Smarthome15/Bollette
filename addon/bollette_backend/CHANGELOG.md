@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.3
+
+- **Fix decisivo**: sul filesystem del Pi la cartella dell'app è
+  `www/Bollette` (B maiuscola) — da Windows/SMB non si vede, ma Linux è
+  case-sensitive. `run.sh` ora prova `Bollette` e `bollette` in
+  `/homeassistant` e `/config` (diagnosi arrivata dal log della 1.0.1/1.0.2).
+
 ## 1.0.2
 
 - Aggiunto questo CHANGELOG (la finestra di aggiornamento di HA lo mostra).
