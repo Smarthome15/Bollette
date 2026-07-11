@@ -85,6 +85,20 @@ I colori "ufficiali" delle utenze sono variabili CSS in `app.css` (`--color-luce
 
 Ogni intestazione di colonna (`<th>`) ha un'icona **ⓘ** (`span.th-help`) con un tooltip nativo (`title`) che spiega cosa contiene la colonna. Tecnica volutamente leggera: nessun JS, funziona ovunque (anche dentro HA). Le descrizioni riflettono il comportamento reale del software (es. su "Data Bolletta" ricorda che per i grafici conta il Periodo, non la data).
 
+## Layout su schermi stretti (app companion / telefono) — anti-overflow
+
+Su un telefono (es. app companion di Home Assistant) un contenuto largo — una tabella, un canvas, una "parola" senza spazi come un percorso NAS o un nome file PDF — propaga la sua **larghezza minima** su per la catena flex/grid e allarga card e pagina oltre lo schermo: il layout si dimensiona sulle scritte. Le regole (blocco "ANTI-OVERFLOW" in `app.css`, stessa tecnica dell'app F.A.M.ilia):
+
+- **Ogni anello della catena deve poter restringersi**: `min-width: 0` su `.content-area` (figlio flex), sui figli diretti delle grid (`.charts-grid > *`, `.split-view > *`, `.grid-2-1 > *`, `.kpi-grid > *` — i track `1fr` non scendono sotto il contenuto senza questo) e su `.form-group`.
+- **Le tabelle scorrono nel proprio contenitore**: ogni `<table class="data-table">` va avvolta in un `<div class="table-responsive">` (`overflow-x: auto`); è la tabella a scorrere, mai la pagina ad allargarsi.
+- **Testi senza spazi si spezzano**: `overflow-wrap: anywhere` su `code`, `.help-text` e `.details-val` (nel modal dettaglio i valori lunghi tipo nomi file vanno a capo invece di allargare il modal).
+- **Media dentro i limiti**: `iframe, canvas, img { max-width: 100% }`.
+- **A ≤768px le righe di form si impilano**: `.form-row` diventa colonna (i `.col-3/4/6` passano a `width: 100%`), perché più input date/number affiancati non ci stanno. Eccezione: le righe con classe **`form-row-compact`** (la griglia soglie in Impostazioni) restano affiancate perché formano una tabellina con riga di intestazione.
+- Sempre a ≤768px: nav a **barra orizzontale scorrevole** (`white-space: nowrap` sui bottoni), padding ridotti (card, celle tabella, `.modal`), titoli più piccoli. `.filter-group` e `.audit-summary-badges` hanno `flex-wrap: wrap` a ogni larghezza.
+- Gli overlay a schermo intero (`.login-panel`, usato anche dal conflitto sync) hanno `overflow-y: auto` + `margin: auto` sulla card: se il contenuto è più alto dello schermo si scorre, non si taglia.
+
+> Quando aggiungi una sezione nuova: se introduce una grid con track `1fr`, dai `min-width: 0` ai figli; se mostra testo "macchina" (path, URL, nomi file), dagli `overflow-wrap: anywhere`; se è una tabella, avvolgila in `.table-responsive`. Verifica a ~360px di larghezza.
+
 ## No-cache (niente versioni vecchie nel browser)
 
 Per evitare che il browser (anche servito da HA) mostri una `app.js`/`app.css` vecchia dopo un aggiornamento: meta `Cache-Control: no-cache` nell'`<head>` di `index.html` **e** middleware `NoCacheStaticMiddleware` nel backend che aggiunge gli header no-cache a HTML/JS/CSS (esclusi API e PDF). Vedi [deploy-nas](deploy-nas.md).

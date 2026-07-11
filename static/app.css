@@ -604,6 +604,7 @@ body {
 
 .filter-group {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
 }
 
@@ -750,6 +751,14 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
     align-items: center;
     justify-content: center;
     padding: 24px;
+    overflow-y: auto;
+}
+
+/* Se il contenuto dell'overlay è più alto dello schermo (es. tabella conflitti
+   sync su telefono), l'overlay scorre e il margine auto tiene la card
+   raggiungibile dall'inizio invece di tagliarne la parte alta. */
+.login-panel > .glass-card {
+    margin: auto;
 }
 
 .login-card {
@@ -916,6 +925,7 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
 
 .audit-summary-badges {
     display: flex;
+    flex-wrap: wrap;
     gap: 10px;
 }
 
@@ -989,6 +999,7 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
 .details-row {
     display: flex;
     justify-content: space-between;
+    gap: 12px;
     border-bottom: 1px solid var(--border-glass);
     padding-bottom: 8px;
 }
@@ -1000,6 +1011,9 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
 
 .details-val {
     font-weight: 600;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    text-align: right;
 }
 
 /* --- IMPOSTAZIONI BACKUP BOX --- */
@@ -1026,6 +1040,41 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
 .gap-3 { gap: 12px; }
 .gap-4 { gap: 16px; }
 
+/* --- ANTI-OVERFLOW (app companion / schermi stretti) ---
+   Un contenuto largo (tabella, canvas, testo senza spazi come un percorso NAS o
+   un nome file PDF) propaga la sua larghezza minima su per la catena flex/grid
+   e allarga card e pagina oltre lo schermo: il layout si dimensiona sulle
+   scritte. Ogni anello della catena deve poter restringersi (min-width: 0) così
+   le tabelle scorrono nel proprio .table-responsive invece di allargare tutto.
+   Stessa tecnica applicata nell'app F.A.M.ilia. */
+.content-area {
+    min-width: 0; /* figlio flex di .app-container */
+}
+
+.charts-grid > *,
+.split-view > *,
+.grid-2-1 > *,
+.kpi-grid > * {
+    min-width: 0; /* i track 1fr delle grid non scendono sotto il contenuto senza questo */
+}
+
+.form-group {
+    min-width: 0; /* figlio flex di .form-row: gli input date/number possono restringersi */
+}
+
+.modal-content {
+    min-width: 0;
+}
+
+iframe, canvas, img {
+    max-width: 100%;
+}
+
+/* Percorsi NAS/URL nei testi di aiuto: spezzali invece di allargare la card */
+code, .help-text {
+    overflow-wrap: anywhere;
+}
+
 /* Responsive adjustments for sidebar on small screens */
 @media(max-width: 768px) {
     .app-container {
@@ -1050,10 +1099,44 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
     .nav-btn {
         padding: 8px 12px;
         font-size: 0.85rem;
+        white-space: nowrap; /* barra tab orizzontale scorrevole, niente etichette a capo */
+        flex: 0 0 auto;
     }
     .content-area {
         margin-left: 0;
-        padding: 20px;
+        padding: 20px 14px;
+    }
+    .tab-header h2 {
+        font-size: 1.6rem;
+    }
+    .glass-card {
+        padding: 18px;
+    }
+    .modal {
+        padding: 12px;
+    }
+    .data-table th,
+    .data-table td {
+        padding: 10px 12px;
+    }
+    /* Le righe di form si impilano: più campi affiancati (date, fasce F1/F2/F3)
+       su uno schermo stretto non ci stanno e allargherebbero la pagina.
+       Le righe .form-row-compact (griglia soglie in Impostazioni) restano
+       affiancate perché formano una tabellina con riga di intestazione. */
+    .form-row:not(.form-row-compact) {
+        flex-direction: column;
+        gap: 0;
+    }
+    .form-row:not(.form-row-compact) > .col-6,
+    .form-row:not(.form-row-compact) > .col-4,
+    .form-row:not(.form-row-compact) > .col-3 {
+        width: 100%;
+    }
+    .pdf-section {
+        min-height: 300px;
+    }
+    #modal-pdf-frame {
+        height: 420px;
     }
 }
 
