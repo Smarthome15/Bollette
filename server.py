@@ -419,8 +419,8 @@ def parse_pdf_gemini(text: str, utility_type: str):
         - consumo_fatturato: il consumo del periodo DICHIARATO nella bolletta (numero, nell'unità dell'utenza: kWh per la luce, Smc per il gas, m³ per l'acqua). È il consumo del periodo, NON la lettura del contatore. Metti null se non indicato.
         - fattura: l'importo totale da pagare in Euro (numero decimale). Se non c'è importo o è solo una comunicazione, metti null.
         - quota_fissa: la somma delle quote FISSE del periodo in Euro (numero decimale: es. quota fissa di vendita + trasporto/gestione contatore, indipendenti dal consumo). null se non scorporabile.
-        - quota_energia: la spesa per la materia/energia effettivamente CONSUMATA nel periodo in Euro (numero decimale), esclusa la quota fissa. null se non indicata.
-        - prezzo_unitario_energia: il prezzo unitario della materia consumata, in EUR per unità (EUR/kWh per LUCE, EUR/Smc per GAS, EUR/m³ per ACQUA). Numero decimale con più cifre (es. 0.1234). null se non indicato.
+        - quota_energia: l'importo in Euro della parte VARIABILE legata al consumo (la riga complessiva tipo "Quota per consumi X unità × PREZZO = IMPORTO"), esclusa la quota fissa. NON usare le sotto-voci "di cui ..." (es. "di cui spesa per vendita"): serve l'importo complessivo della quota consumi. null se non indicata.
+        - prezzo_unitario_energia: il prezzo unitario COMPLESSIVO della stessa riga "Quota per consumi" (EUR/kWh per LUCE, EUR/Smc per GAS, EUR/m³ per ACQUA), numero decimale con più cifre. VINCOLO DI COERENZA: deve valere quota_energia ≈ consumo_fatturato × prezzo_unitario_energia (stessa riga della bolletta, mai mescolare una sotto-voce col totale). null se non indicato.
         """
         if utility_type.upper() == "LUCE":
             prompt += """
@@ -428,6 +428,10 @@ def parse_pdf_gemini(text: str, utility_type: str):
             - lettura_f2: valore lettura contatore fascia F2 (intero, null se assente).
             - lettura_f3: valore lettura contatore fascia F3 (intero, null se assente).
             - lettura_totale: valore lettura totale contatore (intero, null se assente).
+
+            ATTENZIONE LETTURE (LUCE): se la bolletta riporta più letture nel tempo,
+            usa per ogni fascia la lettura PIÙ RECENTE (quella di FINE periodo), non
+            la lettura iniziale né quelle intermedie, e mai stime future.
             """
         elif utility_type.upper() == "RIFIUTI":
             prompt += """
@@ -442,6 +446,13 @@ def parse_pdf_gemini(text: str, utility_type: str):
         else:
             prompt += """
             - lettura: valore lettura contatore (intero, null se assente).
+
+            ATTENZIONE LETTURA: la tabella "Letture e consumi" riporta spesso PIÙ
+            letture (inizio periodo, intermedie, fine periodo). "lettura" è il valore
+            del contatore PIÙ RECENTE, cioè quello con la DATA PIÙ AVANTI nel tempo
+            (l'ultima riga della tabella, di norma la fine del periodo fatturato).
+            NON usare la lettura iniziale, NON le intermedie, NON stime future.
+            I punti nelle migliaia vanno rimossi (es. "1.377" → 1377).
             """
             if utility_type.upper() == "ACQUA":
                 prompt += """
@@ -459,7 +470,13 @@ def parse_pdf_gemini(text: str, utility_type: str):
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json")
+            # temperature=0: estrazione DETERMINISTICA. Senza, il default alto del
+            # modello faceva "ballare" i campi tra un caricamento e l'altro (lettura
+            # sbagliata/vuota, quota_energia che alternava totale e sotto-voce).
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0
+            )
         )
         return json.loads(response.text)
     except Exception as e:
