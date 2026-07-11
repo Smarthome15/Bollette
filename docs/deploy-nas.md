@@ -56,7 +56,15 @@ Il frontend è servito sempre con header **`Cache-Control: no-cache`** (meta tag
 - Add-on fermo e PC spento → da HA (8123) si fa login e si leggono i dati statici; inserimento e PDF non disponibili finché uno dei due backend non riparte. L'app segnala lo stato "sola lettura".
 - In modalità add-on, sync e mirroring sono spenti per definizione (`MODALITA_ADDON`): niente overlay conflitti sul Pi.
 
+## Accesso da fuori casa via NGINX (preparato l'11/07/2026, in attesa di attivazione)
+
+Da pagina **HTTPS** (DuckDNS) il browser blocca le chiamate a `http://…:8000` (mixed content): la soluzione è pubblicare l'API **same-origin** sotto il dominio del proxy. Tutto è pronto, manca solo l'attivazione (verifica di Jarvis + "vai" di Matteo):
+
+- **Snippet NGINX** in `addon/nginx/nginx_proxy_default_bollette.conf`: `location /bollette-api/ { proxy_pass http://192.168.1.15:8000/; … }` con `client_max_body_size 64m` (upload PDF) e `proxy_read_timeout 180s` (Gemini). Va copiato in `/share` e serve l'add-on NGINX in modalità `customize` + riavvio dell'add-on NGINX.
+- **Frontend già pronto** (`initSettings`): su pagina HTTPS l'`apiBaseUrl` default è `/bollette-api` (same-origin); un indirizzo `http://…` salvato a mano viene **ignorato su pagina HTTPS** (non potrebbe comunque funzionare). Se la rotta NGINX non esiste ancora, si degrada in sola lettura come sempre.
+- ⚠️ **Sicurezza da decidere PRIMA di attivare**: l'app non ha autenticazione propria; con la rotta attiva le **scritture** diventano raggiungibili da chiunque conosca il dominio (oggi da fuori è esposta solo la lettura via `/local/`). Opzioni nello snippet: allowlist IP, basic auth, o accettare il rischio (dominio non pubblicizzato). Discussione in bacheca.
+
 ## Piste aperte sul deploy
 
-- **Accesso da fuori casa**: DuckDNS + NGINX oppure Nabu Casa/Ingress sopra l'add-on (in tal caso instradare `/api` same-origin per evitare mixed-content/CORS).
 - **Rafforzare la catena di backup** ora che il Pi è l'unica fonte di verità dei dati (segnalazione di Jarvis, 11/07/2026: Google Drive Backup settimanale ×2 copie, ~1,5 GB liberi su Drive; il PC che scarica al login è la riserva attuale).
+- **Scrittura atomica dei JSON** (tmp + rename in `api_save_data`) — concordata con Jarvis, da fare al prossimo giro su `server.py` (poi Pubblica + riavvio add-on).

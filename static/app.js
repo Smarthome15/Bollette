@@ -106,19 +106,28 @@ function initSettings() {
         state.storageMode = savedStorageMode;
     }
     
-    if (savedApiUrl) {
+    const paginaHttps = window.location.protocol === "https:";
+
+    if (savedApiUrl && !(paginaHttps && savedApiUrl.trim().toLowerCase().startsWith("http:"))) {
         // L'utente ha configurato esplicitamente l'indirizzo del backend (es. il PC).
+        // Eccezione: un indirizzo http:// su pagina https NON può funzionare (il
+        // browser blocca il mixed content) → si ignora e si usa il same-origin sotto.
         state.apiBaseUrl = savedApiUrl;
+    } else if (paginaHttps) {
+        // Pagina servita via proxy HTTPS (DuckDNS + NGINX): l'API è pubblicata
+        // same-origin sotto /bollette-api (snippet in addon/nginx/, vedi
+        // docs/deploy-nas.md). Se la rotta non c'è ancora, loadData() degrada
+        // alla sola lettura dei JSON statici come prima.
+        state.apiBaseUrl = "/bollette-api";
     } else if (window.location.port === "8000") {
         // L'app è servita dallo stesso backend Python: usa percorso relativo.
         state.apiBaseUrl = "";
-    } else if (/^https?:$/.test(window.location.protocol) && window.location.hostname) {
-        // App servita altrove (tipicamente Home Assistant su :8123) e nessun indirizzo
-        // configurato: col backend come ADD-ON, il backend gira sullo STESSO host di HA
-        // → proviamo <host>:8000. Se l'add-on non risponde, loadData() degrada comunque
-        // alla lettura dei JSON statici (sola lettura), come prima. Un indirizzo salvato
-        // in Impostazioni ha sempre la precedenza (es. backend sul PC di sviluppo).
-        state.apiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
+    } else if (window.location.protocol === "http:" && window.location.hostname) {
+        // App servita altrove in HTTP (tipicamente Home Assistant su :8123) e nessun
+        // indirizzo configurato: col backend come ADD-ON, il backend gira sullo STESSO
+        // host di HA → proviamo <host>:8000. Se l'add-on non risponde, loadData()
+        // degrada comunque alla lettura dei JSON statici (sola lettura), come prima.
+        state.apiBaseUrl = `http://${window.location.hostname}:8000`;
     } else {
         // Pagina aperta da file:// o contesto senza host: resta relativo (fallback
         // localStorage in loadData).
