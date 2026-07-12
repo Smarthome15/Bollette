@@ -113,6 +113,24 @@ def analizza_stato_sincronizzazione_utente(utente: str):
 
     return richiede_risoluzione, report
 
+# --- SCRITTURA ATOMICA DEI FILE DATI (concordata con Jarvis, bacheca 11/07/2026) ---
+# Un crash o un blackout a metà scrittura non deve mai lasciare un JSON troncato:
+# si scrive su un file temporaneo nella stessa cartella e poi lo si sostituisce
+# con os.replace (atomico sullo stesso filesystem). Vale per i dati, non per il codice.
+
+def scrivi_json_atomico(filepath: str, records):
+    tmp_path = filepath + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(records, f, indent=4, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, filepath)
+
+def copia_file_dati_atomica(src: str, dst: str):
+    tmp_path = dst + ".tmp"
+    shutil.copy2(src, tmp_path)
+    os.replace(tmp_path, dst)
+
 def esegui_azione_sincronizzazione(utente: str, azione: str, chiave_specifica: str = None):
     if not connessione_nas_attiva():
         return False, "NAS non raggiungibile."
@@ -134,10 +152,10 @@ def esegui_azione_sincronizzazione(utente: str, azione: str, chiave_specifica: s
 
             if azione == 'upload':
                 if os.path.exists(path_locale):
-                    shutil.copy2(path_locale, path_remoto)
+                    copia_file_dati_atomica(path_locale, path_remoto)
             elif azione == 'download':
                 if os.path.exists(path_remoto):
-                    shutil.copy2(path_remoto, path_locale)
+                    copia_file_dati_atomica(path_remoto, path_locale)
         return True, "Sincronizzazione completata."
     except Exception as e:
         return False, f"Errore sync: {e}"
@@ -551,9 +569,8 @@ async def api_save_data(request: Request):
         except Exception as e:
             print(f"Errore ordinamento record: {e}")
             
-        # 1. Salva localmente sul PC
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(records, f, indent=4, ensure_ascii=False)
+        # 1. Salva localmente (scrittura atomica: mai un JSON troncato)
+        scrivi_json_atomico(filepath, records)
             
         # 2. Specchia immediatamente sul NAS (se online)
         mirror_msg = ""
@@ -561,7 +578,7 @@ async def api_save_data(request: Request):
             try:
                 filename = os.path.basename(filepath)
                 path_remoto = os.path.join(DB_DIR_REMOTA, filename)
-                shutil.copy2(filepath, path_remoto)
+                copia_file_dati_atomica(filepath, path_remoto)
                 mirror_msg = " e sincronizzati istantaneamente sul NAS!"
             except Exception as e:
                 mirror_msg = f" (ma errore di sincronizzazione immediata sul NAS: {e})"
