@@ -8,7 +8,7 @@
 
 - `user` — profilo attivo (`{ username, ruolo, prefix }`); determina il `db_prefix` dei file dati.
 - `data.bills` / `data.readings` — i record per utenza: `{ LUCE: [], GAS: [], ACQUA: [] }`.
-- `charts` — istanze Chart.js attive (`spese`, `consumi`, `consumiMensili`, `audit`, `prezzi`), distrutte e ricreate a ogni render.
+- `charts` — istanze Chart.js attive (`spese`, `consumi`, `consumiMensili`, `audit`, `prezzi`, `prezziFisso`, `prezziIndice`, `confronto*`), distrutte e ricreate a ogni render.
 - `activeTab` — la tab visibile; le funzioni `render*` escono subito se la loro tab non è attiva.
 - `dashboardYear` — anno selezionato nella Dashboard (default = anno in corso).
 - `billDateFrom`/`billDateTo`, `readingDateFrom`/`readingDateTo` — filtri intervallo date delle tabelle Bollette e Letture.
@@ -63,8 +63,17 @@ Inoltre, in modalità offline, accoda in "pending" la lettura realmente inserita
 ### 4. Verifica Anomalie — `renderAuditTab`, `auditConsumoForBill`, helper di matching
 Confronta, per ogni bolletta, il **consumo fatturato** col **consumo rilevato** dalle autoletture nello stesso periodo (matching per **mese**: differenza tra la lettura del mese di fine e quella del mese prima dell'inizio). Classifica ogni bolletta: Allineata / Sovrafatturata / Conguaglio atteso / Non verificabile. Mostra un avviso cliccabile che rimanda alla tab Andamento Prezzi quando ci sono variazioni di prezzo/consumo da controllare.
 
-### 5. Andamento Prezzi — `renderPrezziTab`, `computePrezziVariazioni`, `renderPrezziChart`, `contaSegnalazioniPrezzi`, `getPrezziSoglia`
-Confronta ogni bolletta con la **precedente della stessa utenza** su **prezzo unitario** (`prezzo_unitario_energia`) e **consumo**, evidenziando le variazioni oltre una **soglia regolabile** (default 15%). Considera **solo le bollette con prezzo unitario reale** (quelle estratte da PDF): niente stime sullo storico. Tabella delle variazioni + grafico dell'andamento del prezzo unitario nel tempo. `contaSegnalazioniPrezzi` alimenta il badge nella pagina Verifica Anomalie.
+### 5. Andamento Prezzi (fattori tariffari) — `renderPrezziTab`, `computePrezziFattori`, `buildPrezziVerdetto`, `renderPrezziCharts`, `contaSegnalazioniPrezzi`, `getPrezziSoglia`, `getConsumoTipo`
+
+Rilavorata il 12/07/2026 (richiesta di Matteo, parere favorevole di Jarvis in bacheca). Risponde alla domanda: *"i fattori che pago sempre stanno aumentando in modo spropositato? → è ora di cambiare operatore?"*. Il vecchio approccio costo/consumo era fuorviante: la quota fissa spalmata su consumi bassi gonfia il prezzo apparente (3,20 €/Smc d'estate vs 1,36 d'inverno a parità di tariffa).
+
+Tre serie **separate per fattore**, per utenza (solo bollette con dati di dettaglio reali, competenza come ordinamento):
+
+- **Quota fissa in €/giorno** (`quota_fissa / giorni del periodo`, `giorniPeriodoBolletta`): il "canone", MAI spalmato sul consumo. Non ha stagionalità: se sale è l'operatore.
+- **Prezzo unitario** (`prezzo_unitario_energia`, €/unità): con offerte indicizzate si muove col mercato.
+- **Indice "bolletta tipo"** (€/mese): `quota_fissa_giornaliera × 30 + prezzo_unitario × consumo tipo` — costo simulato a **consumo costante**, confrontabile tra stagioni. Il **consumo tipo** (il "carrello fisso") è la mediana storica mensile dalle autoletture (`consumoTipoDefault`), resta FISSO finché non lo si cambia a mano nell'input della tab (override per utenza in `localStorage` `consumicasa_consumo_tipo`, `getConsumoTipo`/`setConsumoTipo`, pulsante ↺ per tornare alla mediana): così un rialzo dell'indice significa sempre "tariffa peggiorata", mai "è cambiata la mediana" (nota di Jarvis).
+
+Ogni fattore è confrontato con la **bolletta precedente** e col **pari periodo di un anno prima** (competenza a 11–13 mesi, `mesiTra`): il secondo distingue la stagionalità del mercato da un rincaro vero. In cima un **verdetto in linguaggio semplice** (`buildPrezziVerdetto`, riquadro colorato ok/warn/danger): quota fissa su = sospetto sempre; prezzo su solo vs precedente = "probabile stagionalità" (warn), su anche vs anno prima = rincaro vero (danger). **Guardie** (regola: un dato mancante non deve travestirsi da misura): quota fissa assente/zero o date del periodo mancanti → il fattore resta `null`, la bolletta esce dai grafici che non può alimentare, con **nota del conteggio** sotto ogni grafico e nota esplicita per le escluse del tutto. `contaSegnalazioniPrezzi` (bollette con almeno un fattore oltre soglia) alimenta il badge nella pagina Verifica Anomalie.
 
 ### 6. Confronto Periodi — `renderConfrontoTab`, `mesiDelPeriodo`, `consumoPeriodo`, `consumoPerMese`, `renderConfrontoChart`, `renderConfrontoMensileChart`
 Confronta il **consumo** di due periodi della stessa durata. Selettori: **durata** (1/3/6/12 mesi), **Periodo A** e **Periodo B** (mese-anno d'inizio, `<input type="month">`), **soglia "simile"** regolabile (default 10%). Mostra **solo il consumo** dalle autoletture (la spesa dipende dalle bollette, non sempre presenti, quindi è stata esclusa): per ogni utenza consumo A vs B con variazione % ed esito (Simile/In aumento/In calo). Tre output: tabella, grafico totale per utenza (`state.charts.confronto`), e **3 grafici mese-per-mese** uno per utenza (`confrontoLuce/Gas/Acqua`) con asse X = posizione nel periodo (1° mese, 2° mese, …) così A e B sono allineabili anche se partono da mesi diversi.

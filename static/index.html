@@ -684,11 +684,11 @@
             <!-- ================= TAB: ANDAMENTO PREZZI ================= -->
             <section id="tab-prezzi" class="tab-content">
                 <div class="tab-header">
-                    <h2>Andamento Prezzi e Consumi</h2>
-                    <p>Confronto tra bollette consecutive della stessa utenza per scoprire <strong>variazioni importanti</strong> del prezzo unitario dell'energia (rincari tariffari) o del consumo. Si basa sui dati di dettaglio costi estratti dalle bollette PDF.</p>
+                    <h2>Andamento Prezzi (fattori tariffari)</h2>
+                    <p>Monitora i <strong>fattori che si pagano sempre</strong>, ciascuno per conto suo: la <strong>quota fissa</strong> (il "canone", in €/giorno), il <strong>prezzo unitario</strong> della materia, e l'indice <strong>"bolletta tipo"</strong> — quanto costerebbe ogni mese la tariffa con un consumo sempre uguale. Se un fattore sale oltre soglia, c'è qualcosa da chiarire con l'operatore (o un buon motivo per cambiarlo).</p>
                 </div>
 
-                <!-- Filtro utenza + soglia regolabile -->
+                <!-- Filtri: utenza, soglia, consumo tipo (il "carrello fisso" dell'indice) -->
                 <div class="glass-card">
                     <div class="flex-between flex-wrap gap-4">
                         <div class="filter-group">
@@ -704,24 +704,65 @@
                             <input type="number" id="prezzi-soglia" class="select-styled" style="width:90px;" min="1" max="100" step="1" value="15">
                             <span class="ml-2">%</span>
                         </div>
+                        <div class="filter-group">
+                            <label for="prezzi-consumo-tipo" class="mr-2 font-medium">Consumo tipo:</label>
+                            <input type="number" id="prezzi-consumo-tipo" class="select-styled" style="width:90px;" min="1" step="1">
+                            <span class="ml-2" id="prezzi-consumo-tipo-unit"></span>
+                            <button type="button" id="prezzi-consumo-tipo-reset" class="select-styled ml-2" style="cursor:pointer;" title="Torna alla mediana storica delle autoletture">↺</button>
+                        </div>
+                    </div>
+                    <p class="help-text mt-2" id="prezzi-consumo-tipo-hint"></p>
+                </div>
+
+                <!-- Verdetto in linguaggio semplice (popolato da JS) -->
+                <div class="glass-card mt-4" id="prezzi-verdetto" style="border-radius:var(--radius-md);"></div>
+
+                <!-- Grafici dei fattori: quota fissa e prezzo unitario affiancati -->
+                <div class="charts-grid mt-4">
+                    <div class="glass-card">
+                        <h3>Quota fissa (€/giorno)</h3>
+                        <p class="subtitle">Il "canone" che si paga anche a consumo zero, normalizzato al giorno. Non dipende dal mercato: dovrebbe essere una linea piatta — se sale, l'operatore ha ritoccato il canone.</p>
+                        <div class="chart-wrapper mt-3" style="height: 280px;">
+                            <canvas id="chart-prezzi-fisso"></canvas>
+                        </div>
+                        <p class="help-text mt-2" id="prezzi-fisso-note"></p>
+                    </div>
+                    <div class="glass-card">
+                        <h3>Prezzo unitario (€/unità)</h3>
+                        <p class="subtitle">Il prezzo della sola materia consumata. Con offerte indicizzate un po' di su-e-giù col mercato è normale: conta il confronto con un anno fa.</p>
+                        <div class="chart-wrapper mt-3" style="height: 280px;">
+                            <canvas id="chart-prezzi"></canvas>
+                        </div>
+                        <p class="help-text mt-2" id="prezzi-prezzo-note"></p>
                     </div>
                 </div>
 
-                <!-- Tabella variazioni tra bollette consecutive -->
+                <!-- Indice "bolletta tipo" a consumo costante -->
                 <div class="glass-card mt-4">
-                    <h3>Variazioni tra bollette consecutive</h3>
-                    <p class="subtitle">Ogni bolletta è confrontata con la precedente della stessa utenza. Sono evidenziate le variazioni che superano la soglia impostata.</p>
+                    <h3>Indice "bolletta tipo" (€/mese a consumo costante)</h3>
+                    <p class="subtitle">Quanto costerebbe ogni mese la tariffa di ciascuna bolletta se il consumo fosse SEMPRE il consumo tipo impostato sopra (quota fissa giornaliera × 30 + prezzo unitario × consumo tipo). Immune alle stagioni: se sale, la tariffa è peggiorata.</p>
+                    <div class="chart-wrapper mt-3" style="height: 300px;">
+                        <canvas id="chart-prezzi-indice"></canvas>
+                    </div>
+                    <p class="help-text mt-2" id="prezzi-indice-note"></p>
+                </div>
+
+                <!-- Tabella di dettaglio per bolletta -->
+                <div class="glass-card mt-4">
+                    <h3>Dettaglio per bolletta</h3>
+                    <p class="subtitle">Ogni fattore è confrontato con la bolletta precedente ("prec.") e — quando esiste — con il pari periodo di un anno prima ("anno"), che distingue la stagionalità del mercato da un rincaro vero.</p>
                     <div class="table-responsive mt-3">
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>Bolletta (Data) <span class="th-help" title="Data della bolletta confrontata.">ⓘ</span></th>
-                                    <th>Periodo <span class="th-help" title="Periodo di fatturazione della bolletta.">ⓘ</span></th>
-                                    <th>Prezzo Unitario <span class="th-help" title="Prezzo della materia consumata (€/unità), estratto dalla bolletta PDF.">ⓘ</span></th>
-                                    <th>Var. Prezzo <span class="th-help" title="Variazione % del prezzo unitario rispetto alla bolletta precedente della stessa utenza.">ⓘ</span></th>
-                                    <th>Consumo <span class="th-help" title="Consumo del periodo dichiarato in bolletta.">ⓘ</span></th>
-                                    <th>Var. Consumo <span class="th-help" title="Variazione % del consumo rispetto alla bolletta precedente.">ⓘ</span></th>
-                                    <th>Segnalazione <span class="th-help" title="Evidenziata se la variazione di prezzo o consumo supera la soglia impostata.">ⓘ</span></th>
+                                    <th>Periodo <span class="th-help" title="Periodo di fatturazione della bolletta (la data di emissione è nel tooltip della riga).">ⓘ</span></th>
+                                    <th>Prezzo unitario <span class="th-help" title="Prezzo della sola materia consumata (€/unità), dalla riga 'Quota per consumi' della bolletta PDF.">ⓘ</span></th>
+                                    <th>Var. prezzo <span class="th-help" title="Variazione % del prezzo unitario: vs bolletta precedente e vs pari periodo di un anno prima.">ⓘ</span></th>
+                                    <th>Quota fissa <span class="th-help" title="Quota fissa normalizzata al giorno (€/giorno): si paga anche a consumo zero.">ⓘ</span></th>
+                                    <th>Var. fissa <span class="th-help" title="Variazione % della quota fissa giornaliera: vs precedente e vs anno prima.">ⓘ</span></th>
+                                    <th>Bolletta tipo <span class="th-help" title="Costo mensile simulato a consumo costante (consumo tipo): confrontabile tra stagioni.">ⓘ</span></th>
+                                    <th>Var. indice <span class="th-help" title="Variazione % della bolletta tipo: vs precedente e vs anno prima.">ⓘ</span></th>
+                                    <th>Segnalazione <span class="th-help" title="⚠️ = fattore oltre soglia in modo sospetto (quota fissa su, o prezzo/indice su anche rispetto a un anno fa).">ⓘ</span></th>
                                 </tr>
                             </thead>
                             <tbody id="table-prezzi-body">
@@ -729,15 +770,7 @@
                             </tbody>
                         </table>
                     </div>
-                </div>
-
-                <!-- Grafico andamento prezzo unitario -->
-                <div class="glass-card mt-4">
-                    <h3>Andamento del Prezzo Unitario nel Tempo</h3>
-                    <p class="subtitle">Prezzo unitario dell'energia (€ per unità) per ogni bolletta con dati di dettaglio. Una salita costante indica un rincaro tariffario.</p>
-                    <div class="chart-wrapper mt-3" style="height: 350px;">
-                        <canvas id="chart-prezzi"></canvas>
-                    </div>
+                    <p class="help-text mt-2" id="prezzi-escluse-note"></p>
                 </div>
             </section>
 

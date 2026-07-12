@@ -16,6 +16,8 @@ const state = {
         consumiMensili: null,
         audit: null,
         prezzi: null,
+        prezziFisso: null,   // quota fissa €/giorno (tab Andamento Prezzi)
+        prezziIndice: null,  // indice "bolletta tipo" €/mese (tab Andamento Prezzi)
         confronto: null,
         confrontoLuce: null,
         confrontoGas: null,
@@ -391,9 +393,22 @@ function initEventListeners() {
         renderDashboard();
     });
 
-    // Tab Andamento Prezzi: selettore utenza e soglia di segnalazione
+    // Tab Andamento Prezzi: selettore utenza, soglia di segnalazione e consumo tipo
     document.getElementById("prezzi-utility-select").addEventListener("change", renderPrezziTab);
     document.getElementById("prezzi-soglia").addEventListener("input", renderPrezziTab);
+    // Consumo tipo (il "carrello fisso" dell'indice bolletta tipo): vuoto o non valido
+    // → si torna alla mediana storica; un valore → override salvato per utenza.
+    document.getElementById("prezzi-consumo-tipo").addEventListener("change", (e) => {
+        const utility = document.getElementById("prezzi-utility-select").value;
+        const v = parseFloat(e.target.value);
+        setConsumoTipo(utility, (isFinite(v) && v > 0) ? v : null);
+        renderPrezziTab();
+    });
+    document.getElementById("prezzi-consumo-tipo-reset").addEventListener("click", () => {
+        const utility = document.getElementById("prezzi-utility-select").value;
+        setConsumoTipo(utility, null);
+        renderPrezziTab();
+    });
 
     // Tab Confronto Periodi: durata, periodi A/B, soglia
     ["confronto-durata", "confronto-a-mese", "confronto-b-mese", "confronto-soglia"].forEach(id => {
@@ -2211,7 +2226,7 @@ function renderAuditTab() {
         const n = contaSegnalazioniPrezzi(getPrezziSoglia());
         if (n > 0) {
             document.getElementById("audit-prezzi-alert-text").textContent =
-                `Ci sono ${n} variazion${n === 1 ? "e" : "i"} di prezzo o consumo da controllare`;
+                `Ci sono ${n} variazion${n === 1 ? "e" : "i"} tariffari${n === 1 ? "a" : "e"} da controllare`;
             alertEl.classList.remove("hidden");
             lucide.createIcons();
         } else {
@@ -2290,39 +2305,141 @@ function renderAuditTimelineChart(utility, bills, readings) {
     });
 }
 
-// --- ANDAMENTO PREZZI: variazioni tra bollette consecutive ---
-// Considera SOLO le bollette con dati di dettaglio reali (prezzo_unitario_energia
-// presente), come da scelta: niente stime sullo storico. Restituisce la lista
-// ordinata cronologicamente con prezzo unitario, consumo e variazioni % vs la
-// bolletta precedente della stessa utenza. 'soglia' è una frazione (0.15 = 15%).
-function computePrezziVariazioni(utility, soglia) {
-    // Ordina per PERIODO di competenza (periodo_fine), non per data di emissione:
-    // è il periodo che definisce la sequenza cronologica reale dei consumi.
-    const bills = (state.data.bills[utility] || [])
-        .slice()
-        .filter(b => b && typeof b.prezzo_unitario_energia === "number" && isFinite(b.prezzo_unitario_energia) && b.prezzo_unitario_energia > 0)
-        .sort((a, b) => (meseCompetenzaBolletta(a) || "").localeCompare(meseCompetenzaBolletta(b) || ""));
+// --- ANDAMENTO PREZZI: monitoraggio dei FATTORI tariffari ---
+// Obiettivo: capire se i fattori "che si pagano sempre" aumentano in modo
+// spropositato (→ segnale "è ora di cambiare operatore"), senza l'inganno del
+// costo/consumo mescolato: la quota fissa spalmata su consumi bassi gonfia il
+// prezzo apparente (3,20 €/Smc d'estate vs 1,36 d'inverno a parità di tariffa).
+// Tre serie SEPARATE per utenza, solo da bollette con dati di dettaglio reali:
+//  - prezzo unitario variabile (€/unità): con offerte indicizzate segue il mercato;
+//  - quota fissa normalizzata al giorno (€/giorno): il "canone", deve stare piatto;
+//  - indice "bolletta tipo" (€/mese): costo simulato di un consumo COSTANTE
+//    (quota_fissa_giornaliera×30 + prezzo_unitario×consumo tipo), confrontabile
+//    tra stagioni — se sale, la tariffa è peggiorata.
+// Ogni fattore è confrontato con la bolletta precedente E col pari periodo di un
+// anno prima (competenza a 11-13 mesi): il secondo distingue la stagionalità del
+// mercato da un rincaro vero. Guardia: una bolletta senza quota fissa o senza
+// date del periodo ESCE dalle serie che non può alimentare — mai zeri finti.
 
-    const out = [];
-    for (let i = 0; i < bills.length; i++) {
-        const b = bills[i];
-        const prezzo = b.prezzo_unitario_energia;
-        const consumo = (typeof b.consumo_fatturato === "number" && isFinite(b.consumo_fatturato)) ? b.consumo_fatturato : null;
-        const prev = i > 0 ? bills[i - 1] : null;
+const PREZZI_FATTORI = ["prezzo", "qfGiorno", "indice"];
 
-        let varPrezzo = null, varConsumo = null;
-        if (prev && prev.prezzo_unitario_energia > 0) {
-            varPrezzo = (prezzo - prev.prezzo_unitario_energia) / prev.prezzo_unitario_energia;
+// Giorni del periodo di fatturazione (estremi inclusi). null se date assenti o assurde.
+function giorniPeriodoBolletta(bill) {
+    if (!bill || !bill.periodo_inizio || !bill.periodo_fine) return null;
+    const d0 = new Date(bill.periodo_inizio), d1 = new Date(bill.periodo_fine);
+    if (isNaN(d0.getTime()) || isNaN(d1.getTime())) return null;
+    const g = Math.round((d1 - d0) / 86400000) + 1;
+    return (g >= 1 && g <= 400) ? g : null;
+}
+
+function mediana(valori) {
+    if (!valori.length) return null;
+    const v = valori.slice().sort((a, b) => a - b);
+    const m = Math.floor(v.length / 2);
+    return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+}
+
+// Consumo tipo di DEFAULT: mediana dei consumi mensili ricavati dalle autoletture
+// (differenza tra letture consecutive normalizzata a 30 giorni). È il "carrello
+// fisso" dell'indice bolletta tipo. null se le letture non bastano.
+function consumoTipoDefault(utility) {
+    const reads = (state.data.readings[utility] || [])
+        .filter(r => r && typeof r.data === "string")
+        .sort((a, b) => a.data.localeCompare(b.data));
+    const mensili = [];
+    for (let i = 1; i < reads.length; i++) {
+        const v0 = readingValue(reads[i - 1]), v1 = readingValue(reads[i]);
+        const giorni = (new Date(reads[i].data) - new Date(reads[i - 1].data)) / 86400000;
+        if (isFinite(v0) && isFinite(v1) && v1 > v0 && giorni >= 15 && giorni <= 120) {
+            mensili.push((v1 - v0) / giorni * 30);
         }
-        if (prev && typeof prev.consumo_fatturato === "number" && prev.consumo_fatturato > 0 && consumo != null) {
-            varConsumo = (consumo - prev.consumo_fatturato) / prev.consumo_fatturato;
-        }
-        const segnalaPrezzo = varPrezzo != null && Math.abs(varPrezzo) >= soglia;
-        const segnalaConsumo = varConsumo != null && Math.abs(varConsumo) >= soglia;
-
-        out.push({ bill: b, prezzo, consumo, varPrezzo, varConsumo, segnalaPrezzo, segnalaConsumo });
     }
-    return out;
+    const med = mediana(mensili);
+    return med != null ? Math.max(1, Math.round(med)) : null;
+}
+
+// Consumo tipo EFFETTIVO: override manuale per utenza (localStorage) se presente,
+// altrimenti il default dalla mediana. Il valore resta FISSO finché non lo si
+// cambia a mano: così un rialzo dell'indice significa sempre "tariffa peggiorata",
+// mai "è cambiata la mediana".
+function getConsumoTipo(utility) {
+    let salvati = {};
+    try { salvati = JSON.parse(localStorage.getItem("consumicasa_consumo_tipo")) || {}; } catch (e) { salvati = {}; }
+    const v = parseFloat(salvati[utility]);
+    if (isFinite(v) && v > 0) return { valore: v, personalizzato: true };
+    return { valore: consumoTipoDefault(utility), personalizzato: false };
+}
+
+function setConsumoTipo(utility, valore) {
+    let salvati = {};
+    try { salvati = JSON.parse(localStorage.getItem("consumicasa_consumo_tipo")) || {}; } catch (e) { salvati = {}; }
+    if (valore == null) delete salvati[utility];
+    else salvati[utility] = valore;
+    localStorage.setItem("consumicasa_consumo_tipo", JSON.stringify(salvati));
+}
+
+// Mesi di distanza tra due 'YYYY-MM' (b − a).
+function mesiTra(a, b) {
+    if (!a || !b) return null;
+    return (parseInt(b.slice(0, 4), 10) - parseInt(a.slice(0, 4), 10)) * 12
+         + (parseInt(b.slice(5, 7), 10) - parseInt(a.slice(5, 7), 10));
+}
+
+// Serie dei fattori tariffari di un'utenza, ordinata per competenza.
+// Restituisce { rows, escluse }: rows = bollette con almeno un fattore calcolabile
+// (i fattori mancanti restano null e NON alimentano grafici e variazioni);
+// escluse = bollette con dati di dettaglio parziali inutilizzabili, da mostrare con
+// nota (lo storico senza alcun dato di dettaglio resta fuori in silenzio, com'era).
+function computePrezziFattori(utility, soglia, consumoTipo) {
+    const bolle = (state.data.bills[utility] || [])
+        .slice()
+        .filter(b => b && meseCompetenzaBolletta(b))
+        .sort((a, b) => meseCompetenzaBolletta(a).localeCompare(meseCompetenzaBolletta(b)));
+
+    const rows = [], escluse = [];
+    bolle.forEach(b => {
+        const prezzo = (typeof b.prezzo_unitario_energia === "number" && isFinite(b.prezzo_unitario_energia) && b.prezzo_unitario_energia > 0)
+            ? b.prezzo_unitario_energia : null;
+        const giorni = giorniPeriodoBolletta(b);
+        const haQuotaFissa = (typeof b.quota_fissa === "number" && isFinite(b.quota_fissa) && b.quota_fissa > 0);
+        const qfGiorno = (haQuotaFissa && giorni) ? b.quota_fissa / giorni : null;
+
+        if (prezzo == null && qfGiorno == null) {
+            if (haQuotaFissa && !giorni) {
+                escluse.push({ bill: b, motivo: "date del periodo mancanti (quota fissa non normalizzabile al giorno)" });
+            }
+            return; // storico senza dati di dettaglio: fuori dalle serie
+        }
+        const indice = (prezzo != null && qfGiorno != null && consumoTipo > 0)
+            ? qfGiorno * 30 + prezzo * consumoTipo : null;
+        rows.push({ bill: b, comp: meseCompetenzaBolletta(b), prezzo, qfGiorno, indice, variazioni: {}, segnala: false });
+    });
+
+    // Variazioni per fattore: vs bolletta precedente (con quel fattore presente) e
+    // vs pari periodo di un anno prima (competenza a 11-13 mesi, la più vicina a 12).
+    rows.forEach((r, i) => {
+        PREZZI_FATTORI.forEach(f => {
+            const out = { prec: null, anno: null };
+            if (r[f] != null) {
+                for (let j = i - 1; j >= 0; j--) {
+                    if (rows[j][f] != null) { out.prec = (r[f] - rows[j][f]) / rows[j][f]; break; }
+                }
+                let best = null;
+                for (let j = 0; j < i; j++) {
+                    if (rows[j][f] == null) continue;
+                    const d = mesiTra(rows[j].comp, r.comp);
+                    if (d >= 11 && d <= 13 && (best == null || Math.abs(d - 12) < Math.abs(best.d - 12))) best = { j, d };
+                }
+                if (best) out.anno = (r[f] - rows[best.j][f]) / rows[best.j][f];
+            }
+            r.variazioni[f] = out;
+        });
+        r.segnala = PREZZI_FATTORI.some(f => {
+            const v = r.variazioni[f];
+            return (v.prec != null && Math.abs(v.prec) >= soglia) || (v.anno != null && Math.abs(v.anno) >= soglia);
+        });
+    });
+    return { rows, escluse };
 }
 
 // Legge la soglia dall'input (in %), con fallback a 15%. Restituisce una frazione.
@@ -2332,16 +2449,83 @@ function getPrezziSoglia() {
     return (isFinite(v) && v > 0) ? v / 100 : 0.15;
 }
 
-// Conta, su tutte le utenze, quante variazioni superano la soglia: usato dal badge
-// nella pagina Verifica Anomalie per rimandare qui.
+// Conta, su tutte le utenze, le bollette con almeno un fattore oltre soglia: usato
+// dal badge nella pagina Verifica Anomalie per rimandare qui.
 function contaSegnalazioniPrezzi(soglia) {
     let n = 0;
     ["LUCE", "GAS", "ACQUA"].forEach(ut => {
-        computePrezziVariazioni(ut, soglia).forEach(r => {
-            if (r.segnalaPrezzo || r.segnalaConsumo) n++;
-        });
+        const ct = getConsumoTipo(ut).valore;
+        computePrezziFattori(ut, soglia, ct).rows.forEach(r => { if (r.segnala) n++; });
     });
     return n;
+}
+
+// Verdetto in linguaggio semplice, costruito sull'ULTIMA bolletta di ogni fattore.
+// Ritorna { livello: 'ok'|'warn'|'danger'|'nodata', messaggi: [{icona, testo}] }.
+// Logica: la quota fissa non ha stagionalità → ogni salto oltre soglia è sospetto;
+// il prezzo unitario può muoversi col mercato → il confronto anno-su-anno decide
+// se è stagionalità (warn) o un rincaro vero (danger).
+function buildPrezziVerdetto(rows, soglia, consumoTipo, unit) {
+    if (!rows.length) {
+        return { livello: "nodata", messaggi: [{ icona: "ℹ️", testo: "Nessuna bolletta con dati di dettaglio costi per questa utenza: carica le bollette PDF e i fattori tariffari compariranno qui." }] };
+    }
+    const pct = v => (v > 0 ? "+" : "") + Math.round(v * 100) + "%";
+    const ultimo = f => { for (let i = rows.length - 1; i >= 0; i--) if (rows[i][f] != null) return rows[i]; return null; };
+    const messaggi = [];
+    let danger = false, warn = false;
+
+    const rf = ultimo("qfGiorno");
+    if (rf) {
+        const v = rf.variazioni.qfGiorno;
+        const rif = (v.prec != null) ? v.prec : v.anno;
+        if (rif != null && Math.abs(rif) >= soglia) {
+            if (rif > 0) {
+                danger = true;
+                messaggi.push({ icona: "⚠️", testo: `La quota fissa è salita del ${pct(rif)} (ora ${(rf.qfGiorno * 30).toFixed(2)} €/mese): il "canone" non dipende dal mercato — da chiarire con l'operatore.` });
+            } else {
+                messaggi.push({ icona: "✅", testo: `La quota fissa è scesa del ${pct(rif)} (ora ${(rf.qfGiorno * 30).toFixed(2)} €/mese).` });
+            }
+        }
+    }
+
+    const rp = ultimo("prezzo");
+    if (rp) {
+        const v = rp.variazioni.prezzo;
+        if (v.anno != null && Math.abs(v.anno) >= soglia) {
+            if (v.anno > 0) {
+                danger = true;
+                messaggi.push({ icona: "⚠️", testo: `Prezzo unitario ${pct(v.anno)} rispetto a un anno fa (ora ${rp.prezzo.toFixed(3)} €/${unit}): non è stagionalità — vale la pena confrontare altre offerte.` });
+            } else {
+                messaggi.push({ icona: "✅", testo: `Prezzo unitario ${pct(v.anno)} rispetto a un anno fa (ora ${rp.prezzo.toFixed(3)} €/${unit}).` });
+            }
+        } else if (v.prec != null && Math.abs(v.prec) >= soglia) {
+            warn = true;
+            const nota = v.anno != null
+                ? ` (rispetto a un anno fa ${pct(v.anno)}: probabile stagionalità o mercato)`
+                : " (nessuna bolletta di un anno fa per distinguere la stagionalità)";
+            messaggi.push({ icona: "🔎", testo: `Prezzo unitario ${pct(v.prec)} rispetto alla bolletta precedente (ora ${rp.prezzo.toFixed(3)} €/${unit})${nota}.` });
+        }
+    }
+
+    const ri = ultimo("indice");
+    if (ri) {
+        const v = ri.variazioni.indice;
+        const rif = (v.anno != null) ? v.anno : v.prec;
+        const quando = (v.anno != null) ? "rispetto a un anno fa" : "rispetto alla bolletta precedente";
+        if (rif != null && Math.abs(rif) >= soglia) {
+            if (rif > 0) {
+                if (v.anno != null) danger = true; else warn = true;
+                messaggi.push({ icona: "💶", testo: `A parità di consumo (${consumoTipo} ${unit}/mese) la "bolletta tipo" è salita del ${pct(rif)} ${quando}: ora ${ri.indice.toFixed(2)} €/mese.` });
+            } else {
+                messaggi.push({ icona: "💶", testo: `A parità di consumo (${consumoTipo} ${unit}/mese) la "bolletta tipo" è scesa del ${pct(rif)} ${quando}: ora ${ri.indice.toFixed(2)} €/mese.` });
+            }
+        }
+    }
+
+    if (!messaggi.length) {
+        messaggi.push({ icona: "✅", testo: `Tutto regolare: nessun fattore tariffario oltre la soglia del ${Math.round(soglia * 100)}%.` });
+    }
+    return { livello: danger ? "danger" : (warn ? "warn" : "ok"), messaggi };
 }
 
 function renderPrezziTab() {
@@ -2350,91 +2534,137 @@ function renderPrezziTab() {
     const utility = document.getElementById("prezzi-utility-select").value;
     const soglia = getPrezziSoglia();
     const unit = unitForUtility(utility);
-    const rows = computePrezziVariazioni(utility, soglia);
 
+    // Consumo tipo: mostra il valore effettivo e la sua origine (mediana o manuale).
+    const ct = getConsumoTipo(utility);
+    document.getElementById("prezzi-consumo-tipo").value = ct.valore != null ? ct.valore : "";
+    document.getElementById("prezzi-consumo-tipo-unit").textContent = unit + "/mese";
+    const defaultCt = consumoTipoDefault(utility);
+    document.getElementById("prezzi-consumo-tipo-hint").textContent = ct.valore == null
+        ? "Letture insufficienti per calcolare il consumo tipo: inserisci un valore a mano per attivare l'indice \"bolletta tipo\"."
+        : (ct.personalizzato
+            ? `Valore personalizzato (mediana storica: ${defaultCt != null ? defaultCt + " " + unit + "/mese" : "non calcolabile"}). Cambiandolo, l'intera serie dell'indice si ridisegna col nuovo consumo. ↺ per tornare alla mediana.`
+            : "Mediana storica delle tue autoletture; resta fissa, quindi se l'indice sale è la tariffa che è peggiorata. Puoi cambiarla: la serie si ridisegna col nuovo consumo.");
+
+    const { rows, escluse } = computePrezziFattori(utility, soglia, ct.valore);
+
+    renderPrezziVerdetto(buildPrezziVerdetto(rows, soglia, ct.valore, unit));
+    renderPrezziTable(rows, escluse, unit, soglia);
+    renderPrezziCharts(rows, unit);
+}
+
+// Riquadro verdetto colorato in cima alla tab.
+function renderPrezziVerdetto(verdetto) {
+    const box = document.getElementById("prezzi-verdetto");
+    const colori = {
+        ok:     { bordo: "rgba(34, 197, 94, 0.4)",   sfondo: "rgba(34, 197, 94, 0.10)" },
+        warn:   { bordo: "rgba(245, 158, 11, 0.4)",  sfondo: "rgba(245, 158, 11, 0.10)" },
+        danger: { bordo: "rgba(239, 68, 68, 0.45)",  sfondo: "rgba(239, 68, 68, 0.10)" },
+        nodata: { bordo: "rgba(148, 163, 184, 0.35)", sfondo: "rgba(148, 163, 184, 0.08)" }
+    }[verdetto.livello];
+    box.style.border = `1px solid ${colori.bordo}`;
+    box.style.background = colori.sfondo;
+    box.innerHTML = verdetto.messaggi
+        .map(m => `<div style="display:flex; gap:10px; align-items:flex-start; padding:4px 0;"><span>${m.icona}</span><span>${m.testo}</span></div>`)
+        .join("");
+}
+
+// Tabella di dettaglio: una riga per bolletta (più recenti in alto), un blocco
+// di colonne per fattore con variazione vs precedente e vs anno prima.
+function renderPrezziTable(rows, escluse, unit, soglia) {
     const tbody = document.getElementById("table-prezzi-body");
     tbody.innerHTML = "";
 
-    if (rows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-secondary); padding:20px;">Nessuna bolletta con dati di dettaglio costi per questa utenza. Carica una bolletta PDF: il prezzo unitario verrà estratto automaticamente e comparirà qui.</td></tr>`;
-        renderPrezziChart(utility, []);
-        return;
+    if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--text-secondary); padding:20px;">Nessuna bolletta con dati di dettaglio costi per questa utenza. Carica una bolletta PDF: quota fissa e prezzo unitario verranno estratti automaticamente e compariranno qui.</td></tr>`;
     }
 
-    // Mostra in ordine decrescente di PERIODO (più recenti in alto).
-    rows.slice().sort((a, b) => (meseCompetenzaBolletta(b.bill) || "").localeCompare(meseCompetenzaBolletta(a.bill) || "")).forEach(r => {
-        const periodoText = (r.bill.periodo_inizio || r.bill.periodo_fine)
-            ? `${r.bill.periodo_inizio ? formatDate(r.bill.periodo_inizio) : "?"} → ${r.bill.periodo_fine ? formatDate(r.bill.periodo_fine) : "?"}`
-            : "Non indicato";
+    const fmtVar = (v) => {
+        if (v == null) return `<span class="text-secondary">—</span>`;
+        const oltre = Math.abs(v) >= soglia;
+        const cls = oltre ? (v > 0 ? "text-danger font-medium" : "text-success font-medium") : "text-secondary";
+        return `<span class="${cls}">${v > 0 ? "+" : ""}${Math.round(v * 100)}%</span>`;
+    };
+    const cellaVar = (vv) => `<td style="font-size:0.8rem; white-space:nowrap;">${fmtVar(vv.prec)} <span class="text-secondary">prec.</span><br>${fmtVar(vv.anno)} <span class="text-secondary">anno</span></td>`;
 
-        const fmtVar = (v, segnala) => {
-            if (v == null) return `<span class="text-secondary">—</span>`;
-            const segno = v > 0 ? "+" : "";
-            const cls = segnala ? (v > 0 ? "text-danger font-medium" : "text-success font-medium") : "text-secondary";
-            return `<span class="${cls}">${segno}${Math.round(v * 100)}%</span>`;
-        };
-
-        // Segnalazione testuale.
+    rows.slice().reverse().forEach(r => {
+        const vq = r.variazioni.qfGiorno, vp = r.variazioni.prezzo, vi = r.variazioni.indice;
         const note = [];
-        if (r.segnalaPrezzo) note.push(r.varPrezzo > 0 ? "⚠️ Prezzo in aumento" : "Prezzo in calo");
-        if (r.segnalaConsumo) note.push(r.varConsumo > 0 ? "⚠️ Consumo in aumento" : "Consumo in calo");
+        if (vq.prec != null && Math.abs(vq.prec) >= soglia) note.push(vq.prec > 0 ? "⚠️ Quota fissa su" : "Quota fissa giù");
+        if (vp.anno != null && Math.abs(vp.anno) >= soglia) note.push(vp.anno > 0 ? "⚠️ Prezzo su vs anno" : "Prezzo giù vs anno");
+        else if (vp.prec != null && Math.abs(vp.prec) >= soglia) note.push(vp.prec > 0 ? "Prezzo su (stagione?)" : "Prezzo giù (stagione?)");
+        if (vi.anno != null && Math.abs(vi.anno) >= soglia) note.push(vi.anno > 0 ? "⚠️ Bolletta tipo su" : "Bolletta tipo giù");
+        const grave = note.some(n => n.startsWith("⚠️"));
         const segnalazione = note.length
-            ? `<span class="badge ${r.varPrezzo > 0 && r.segnalaPrezzo ? "badge-danger" : "badge-warning"}">${note.join(" · ")}</span>`
+            ? `<span class="badge ${grave ? "badge-danger" : "badge-warning"}">${note.join(" · ")}</span>`
             : `<span class="badge badge-success">Stabile</span>`;
 
         const tr = document.createElement("tr");
         tr.innerHTML = `
-            <td>${formatDate(r.bill.data)}</td>
-            <td style="font-size:0.85rem;">${periodoText}</td>
-            <td class="font-medium">€ ${r.prezzo.toFixed(3)}/${unit}</td>
-            <td>${fmtVar(r.varPrezzo, r.segnalaPrezzo)}</td>
-            <td>${r.consumo != null ? r.consumo + " " + unit : "—"}</td>
-            <td>${fmtVar(r.varConsumo, r.segnalaConsumo)}</td>
+            <td style="font-size:0.85rem;" title="Bolletta del ${formatDate(r.bill.data)}">${formattaPeriodo(r.bill)}</td>
+            <td class="font-medium">${r.prezzo != null ? "€ " + r.prezzo.toFixed(3) + "/" + unit : "—"}</td>
+            ${cellaVar(vp)}
+            <td class="font-medium">${r.qfGiorno != null ? "€ " + r.qfGiorno.toFixed(3) + "/giorno" : "—"}</td>
+            ${cellaVar(vq)}
+            <td class="font-medium">${r.indice != null ? "€ " + r.indice.toFixed(2) + "/mese" : "—"}</td>
+            ${cellaVar(vi)}
             <td>${segnalazione}</td>
         `;
         tbody.appendChild(tr);
     });
 
-    renderPrezziChart(utility, rows);
+    // Guardia visibile: le bollette con dati parziali inutilizzabili non spariscono
+    // in silenzio (un dato mancante non deve travestirsi da misura).
+    document.getElementById("prezzi-escluse-note").textContent = escluse.length
+        ? "Escluse dalle serie: " + escluse.map(e => `bolletta del ${formatDate(e.bill.data)} (${e.motivo})`).join("; ") + "."
+        : "";
 }
 
-// Grafico a linea dell'andamento del prezzo unitario nel tempo.
-function renderPrezziChart(utility, rows) {
-    const ctx = document.getElementById("chart-prezzi").getContext("2d");
-    if (state.charts.prezzi) state.charts.prezzi.destroy();
-
-    const unit = unitForUtility(utility);
-    const labels = rows.map(r => formatDate(r.bill.periodo_fine || r.bill.data));
-    const dataset = rows.map(r => r.prezzo);
-
-    state.charts.prezzi = new Chart(ctx, {
-        type: "line",
-        data: {
-            labels: labels,
-            datasets: [{
-                label: `Prezzo Unitario (€/${unit})`,
-                data: dataset,
-                borderColor: "#f59e0b",
-                backgroundColor: "rgba(245, 158, 11, 0.15)",
-                borderWidth: 2,
-                tension: 0.25,
-                fill: true,
-                pointRadius: 4,
-                pointBackgroundColor: "#f59e0b"
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                x: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
-                y: { beginAtZero: false, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } }
+// I tre grafici a linea (quota fissa €/giorno, prezzo unitario, bolletta tipo).
+// Ogni grafico usa SOLO le bollette che hanno quel fattore; le escluse sono
+// conteggiate nella nota sotto il grafico.
+function renderPrezziCharts(rows, unit) {
+    const disegna = (chiave, canvasId, fattore, etichetta, bordo, sfondo, notaId, motivo) => {
+        const ctx = document.getElementById(canvasId).getContext("2d");
+        if (state.charts[chiave]) state.charts[chiave].destroy();
+        const dati = rows.filter(r => r[fattore] != null);
+        state.charts[chiave] = new Chart(ctx, {
+            type: "line",
+            data: {
+                labels: dati.map(r => formattaMeseAnno(r.comp)),
+                datasets: [{
+                    label: etichetta,
+                    data: dati.map(r => r[fattore]),
+                    borderColor: bordo,
+                    backgroundColor: sfondo,
+                    borderWidth: 2,
+                    tension: 0.25,
+                    fill: true,
+                    pointRadius: 4,
+                    pointBackgroundColor: bordo
+                }]
             },
-            plugins: {
-                legend: { labels: { color: "#f8fafc" } }
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
+                    y: { beginAtZero: false, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } }
+                },
+                plugins: {
+                    legend: { labels: { color: "#f8fafc" } }
+                }
             }
-        }
-    });
+        });
+        const fuori = rows.length - dati.length;
+        document.getElementById(notaId).textContent = fuori > 0
+            ? `${fuori} bollett${fuori === 1 ? "a esclusa" : "e escluse"} da questo grafico: ${motivo}.`
+            : "";
+    };
+
+    disegna("prezziFisso", "chart-prezzi-fisso", "qfGiorno", "Quota fissa (€/giorno)", "#8b5cf6", "rgba(139, 92, 246, 0.15)", "prezzi-fisso-note", "manca la quota fissa o mancano le date del periodo");
+    disegna("prezzi", "chart-prezzi", "prezzo", `Prezzo unitario (€/${unit})`, "#f59e0b", "rgba(245, 158, 11, 0.15)", "prezzi-prezzo-note", "manca il prezzo unitario");
+    disegna("prezziIndice", "chart-prezzi-indice", "indice", "Bolletta tipo (€/mese)", "#22d3ee", "rgba(34, 211, 238, 0.15)", "prezzi-indice-note", "servono sia quota fissa che prezzo unitario (e un consumo tipo)");
 }
 
 // --- CONFRONTO TRA PERIODI ---
