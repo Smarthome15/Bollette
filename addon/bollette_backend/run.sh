@@ -17,11 +17,12 @@ export PYTHONUNBUFFERED=1
 # Il codice dell'app vive nella config di HA, NON dentro l'add-on: è la stessa
 # cartella aggiornata con "Pubblica su NAS". A seconda della versione del
 # Supervisor la config è montata in /homeassistant (mapping moderno
-# homeassistant_config) oppure in /config (mapping storico). ATTENZIONE al
-# maiuscolo/minuscolo: sul Pi la cartella reale è "www/Bollette" (B maiuscola) —
-# da Windows/SMB la differenza non si vede, ma Linux è case-sensitive.
+# homeassistant_config) oppure in /config (mapping storico).
+# Dal 2026-07-19 (bonifica /local) l'app vive nell'area PRIVATA bollette_app,
+# NON più in www/: tutto ciò che sta in www/ è servito da HA senza login.
+# Le varianti www/ restano come fallback SOLO transitorio per il primo avvio.
 APP_DIR=""
-for cand in /homeassistant/www/Bollette /homeassistant/www/bollette /config/www/Bollette /config/www/bollette; do
+for cand in /homeassistant/bollette_app /config/bollette_app /homeassistant/www/Bollette /homeassistant/www/bollette /config/www/Bollette /config/www/bollette; do
     if [ -f "$cand/server.py" ]; then
         APP_DIR="$cand"
         break
@@ -29,7 +30,7 @@ for cand in /homeassistant/www/Bollette /homeassistant/www/bollette /config/www/
 done
 
 if [ -z "$APP_DIR" ]; then
-    echo "[bollette] ERRORE: server.py non trovato in nessuna variante di /homeassistant|/config + www/Bollette|bollette."
+    echo "[bollette] ERRORE: server.py non trovato in /homeassistant|/config + bollette_app (ne' nei vecchi percorsi www)."
     echo "[bollette] Se il codice non e' mai stato pubblicato: dal PC, Impostazioni -> Pubblica su NAS."
     echo "[bollette] Diagnostica mount (da incollare in caso di problemi):"
     echo "[bollette] --- ls / ---";                  ls -la / 2>/dev/null || true

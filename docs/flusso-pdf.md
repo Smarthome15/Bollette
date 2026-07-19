@@ -27,7 +27,7 @@ Comuni a tutte le utenze: `data`, `periodo_inizio`, `periodo_fine`, `consumo_fat
 1. variabile d'ambiente `GEMINI_API_KEY`;
 2. file locale **`secrets_local.py`** (non versionato, `.gitignore`) con `API_KEY_GEMINI = "..."`.
 
-Se nessuna è presente resta vuota → l'app blocca l'estrazione PDF (tutto il resto funziona). Sul NAS la chiave arriva perché `secrets_local.py` è incluso nella pubblicazione del codice. Su una macchina nuova si recupera dal NAS (`\\192.168.1.15\config\www\bollette\secrets_local.py`).
+Se nessuna è presente resta vuota → l'app blocca l'estrazione PDF (tutto il resto funziona). Sul NAS la chiave arriva perché `secrets_local.py` è incluso nella pubblicazione del codice verso l'area PRIVATA (`bollette_app`, mai in `www/` — bonifica /local 19/07/2026); sul Pi vale comunque prima la chiave nelle options dell'add-on. Su una macchina nuova si recupera dal NAS (`\\192.168.1.15\config\bollette_app\secrets_local.py`).
 
 ## La regola dei punti coerenti
 

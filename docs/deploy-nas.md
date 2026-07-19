@@ -4,9 +4,13 @@
 
 ## Infrastruttura reale (rete)
 
-- **HA / NAS = `192.168.1.15`** — Home Assistant OS su Raspberry Pi (~4 GB RAM). Serve l'app come file **statici** da `/config/www/bollette` sulla porta **8123** e — dall'11/07/2026 — esegue il **backend come add-on locale** sulla porta **8000** (vedi sezione sotto). Con l'add-on attivo il PC non serve più.
+- **HA / NAS = `192.168.1.15`** — Home Assistant OS su Raspberry Pi (~4 GB RAM). Dalla **bonifica /local del 19/07/2026** (vedi sotto): sulla porta **8123** HA serve SOLO il frontend statico (`/config/www/Bollette/static` → `/local/Bollette/static/index.html`, **senza autenticazione**); **codice backend, dati e segreti** vivono nell'area privata `/config/bollette_app`, non servita da HA. L'add-on locale esegue il backend sulla porta **8000** (vedi sezione sotto). Con l'add-on attivo il PC non serve più.
 - **Backend Python su PC** (modalità sviluppo/riserva): avviato a mano con `run.bat`/`.venv`, IP DHCP (es. `192.168.1.165:8000`). Resta la macchina da cui si **pubblica il codice** sul NAS; al login scarica dal NAS anche una copia dei dati (rete di riserva).
-- **Accesso da HA**: con l'add-on attivo → tutto (incluso l'inserimento PDF via Gemini: il frontend punta da solo a `<host>:8000`); con add-on fermo e PC spento → login + **sola lettura** dei dati statici serviti da HA.
+- **Accesso da HA**: con l'add-on attivo → tutto (incluso l'inserimento PDF via Gemini: il frontend punta da solo a `<host>:8000`); con add-on fermo → solo login + errore dati (il vecchio ripiego "sola lettura dai JSON statici in /local" non esiste più: era la falla di sicurezza).
+
+## Bonifica /local (19/07/2026) — perché i dati NON stanno in `www/`
+
+Verifica di sicurezza di Jarvis (bacheca 19/07/2026): HA serve tutta `www/` come `/local/` **senza autenticazione**, e tramite l'add-on NGINX SSL proxy (porta 48443, DuckDNS) `/local` era raggiungibile **da internet** — chiave Gemini, password, `.git/`, bollette PDF e dati erano scaricabili da chiunque. Bonifica eseguita: tutto spostato in `/config/bollette_app` (404 da fuori, come le stanze interne di HA), in `www/Bollette` è rimasto solo `static/`, chiave Gemini rigenerata, password e `/api/login` rimossi, residui (`.git`, `.venv`, `ConsumiCasaPython/`) eliminati. Backup pre-bonifica: `backup_nas/bonifica_20260719/` sul PC. **Regola permanente: in `www/` non va MAI nulla di sensibile.**
 
 ## Backend come add-on Home Assistant (dall'11/07/2026)
 
@@ -14,13 +18,13 @@ Il backend gira come **add-on locale HA OS** direttamente sul Raspberry. I file 
 
 Principi di funzionamento:
 
-- **L'add-on è solo il runtime** (immagine `python:3.12-slim-bookworm` + dipendenze del `requirements.txt`): il codice dell'app gira da `/homeassistant/www/bollette`, cioè la STESSA cartella aggiornata da "Pubblica su NAS". **Deploy del codice = Pubblica + Riavvia l'add-on** (nessuna ricostruzione). Se cambiano dipendenze/Dockerfile/run.sh: rieseguire `deploy_addon.ps1` e alzare `version` in `config.yaml` (l'add-on proporrà l'aggiornamento, con rebuild).
+- **L'add-on è solo il runtime** (immagine `python:3.12-slim-bookworm` + dipendenze del `requirements.txt`): dalla v1.0.4 il codice dell'app gira da `/homeassistant/bollette_app` (area privata, la STESSA cartella aggiornata da "Pubblica su NAS"; i vecchi percorsi `www/` restano in `run.sh` solo come fallback transitorio). **Deploy del codice = Pubblica + Riavvia l'add-on** (nessuna ricostruzione). Se cambiano dipendenze/Dockerfile/run.sh: rieseguire `deploy_addon.ps1` e alzare `version` in `config.yaml` (l'add-on proporrà l'aggiornamento, con rebuild).
 - **`BOLLETTE_ADDON=1`** (esportata da `run.sh`) attiva `MODALITA_ADDON` in `config.py`: `connessione_nas_attiva()` risponde sempre False (spegne mirroring dati e overlay conflitti — non c'è più un "remoto": i dati locali SONO quelli sul NAS), il confronto codice dichiara `stessa_radice` e `POST /api/app/publish` rifiuta con un messaggio chiaro (si pubblica dal PC). Senza il flag, i path UNC `\\192.168.1.15\...` di `config.py` su Linux verrebbero interpretati come **cartelle relative** creando directory spurie.
 - **Chiave Gemini nelle options** dell'add-on → env `GEMINI_API_KEY`, già primo nella catena di lettura di `config.py`: sul NAS `secrets_local.py` non serve più.
 - **Vincoli concordati con Jarvis** (bacheca inter-progetto, voce archiviata dell'11/07/2026): `boot: auto` + `watchdog` TCP sulla 8000; access-log disattivato (`--no-access-log`, siamo su microSD; anche `PYTHONDONTWRITEBYTECODE=1` per non sporcare `www` di `__pycache__`); porta 8000 verificata libera sul Pi.
-- **Dati**: unica fonte di verità in `/config/www/bollette/database`, inclusa nei backup nativi HA. ⚠️ La catena backup del Pi (Google Drive Backup settimanale, 2 copie, ~1,5 GB liberi su Drive) è il punto debole segnalato da Jarvis: il PC che scarica dal NAS al login fa da copia di riserva aggiuntiva.
+- **Dati**: unica fonte di verità in `/config/bollette_app/database`, inclusa nei backup nativi HA. ⚠️ La catena backup del Pi (Google Drive Backup settimanale, 2 copie, ~1,5 GB liberi su Drive) è il punto debole segnalato da Jarvis: il PC che scarica dal NAS al login fa da copia di riserva aggiuntiva.
 - **Diagnostica**: `GET http://192.168.1.15:8000/api/health` → `{ok, addon, gemini}` (`gemini: false` = chiave mancante nelle options); log dell'add-on nella sua scheda UI.
-- ⚠️ **Maiuscole/minuscole**: sul filesystem del Pi la cartella reale è `www/Bollette` (**B maiuscola**). Da Windows/SMB la differenza non si vede (per questo `\\192.168.1.15\config\www\bollette` funziona), ma **Linux è case-sensitive**: dentro il container il percorso giusto è `/homeassistant/www/Bollette`. Il `run.sh` dell'add-on prova entrambe le grafie; se si creano riferimenti nuovi lato Pi (URL `/local/...`, script), usare la B maiuscola.
+- ⚠️ **Maiuscole/minuscole**: sul filesystem del Pi la cartella pubblica del frontend è `www/Bollette` (**B maiuscola**), mentre l'area privata è `bollette_app` (tutta minuscola). Da Windows/SMB la differenza non si vede, ma **Linux è case-sensitive**: se si creano riferimenti lato Pi (URL `/local/...`, script), rispettare la grafia esatta.
 
 ## Due sincronizzazioni distinte (da non confondere)
 
@@ -34,17 +38,17 @@ Il backend specchia **ogni salvataggio** sul NAS via SMB (`DB_DIR_REMOTA` in `co
 
 ### 2. Controllo e pubblicazione del CODICE (l'app stessa)
 
-Distinto dai dati: confronta/pubblica i **file dell'app** (locale `APP_DIR_LOCALE` vs NAS `APP_DIR_REMOTA`, cioè `\\192.168.1.15\config\www\bollette`).
+Distinto dai dati. Dalla bonifica /local la pubblicazione ha **due target**: il codice completo va nell'area privata `APP_DIR_REMOTA` (`\\192.168.1.15\config\bollette_app`), il SOLO `static/` va anche in `FRONTEND_DIR_REMOTA` (`\\192.168.1.15\config\www\Bollette`, la cartella pubblica `/local`).
 
-- `GET /api/app/status` (`analizza_stato_applicazione`): confronto file-per-file (prima dimensione, poi hash MD5), **sola lettura**. Esclude `database`, `.venv`, `.git`, `__pycache__`, `.claude`, `backup_nas` (vedi `APP_SYNC_ESCLUSI`). UI: riquadro in Impostazioni + banner al login.
-- `POST /api/app/publish` (`pubblica_app_su_nas`): **specchio esatto** locale→NAS (copia i diversi/nuovi, cancella dal NAS gli extra — mai i dati). **Prima** salva un backup del codice NAS in `backup_nas/nas_<timestamp>/` (`_backup_codice_nas`); se il backup fallisce, **non pubblica**. Include `secrets_local.py`. Per sicurezza, se locale e remoto coincidono (l'app gira già dal NAS) la pubblicazione si interrompe senza fare nulla. UI: pulsante "Pubblica su NAS" con conferma.
+- `GET /api/app/status` (`analizza_stato_applicazione`): confronto file-per-file (prima dimensione, poi hash MD5), **sola lettura**; controlla anche il frontend pubblico (voci `www:`) e segnala come `solo_remoto` qualunque file estraneo in `www/Bollette`. Esclude `database`, `.venv`, `.git`, `__pycache__`, `.claude`, `backup_nas` (vedi `APP_SYNC_ESCLUSI`). UI: riquadro in Impostazioni + banner al login.
+- `POST /api/app/publish` (`pubblica_app_su_nas`): **specchio esatto** locale→NAS su entrambi i target (copia i diversi/nuovi, cancella gli extra — mai i dati; in `www/Bollette` elimina tutto ciò che non è `static/`). **Prima** salva un backup del codice NAS in `backup_nas/nas_<timestamp>/` (`_backup_codice_nas`, sottocartelle `app/` e `www/`); se il backup fallisce, **non pubblica**. Include `secrets_local.py` (solo area privata, MAI in www). Per sicurezza, se locale e remoto coincidono (l'app gira già dal NAS) la pubblicazione si interrompe senza fare nulla. UI: pulsante "Pubblica su NAS" con conferma.
 
 > **Importante**: modificare il codice in locale (o pushare su GitHub) **non** aggiorna ciò che HA serve. Per rendere live le modifiche su Home Assistant serve **Impostazioni → Pubblica su NAS**.
 
 ## Storage mode e `apiBaseUrl`
 
 - **`state.storageMode`** (in `localStorage`): `server` usa le API; `local` usa solo `localStorage` del browser (parsing PDF disattivato, scritture accodate).
-- **`apiBaseUrl`** (`initSettings`): un indirizzo salvato in Impostazioni ha sempre la **precedenza** (es. per puntare al backend sul PC di sviluppo); pagina su porta 8000 → percorso relativo; **altrimenti (es. servito da HA su 8123) prova `<host>:8000`** — con il backend come add-on, HA e backend vivono sullo stesso host, quindi da HA funziona tutto senza configurare nulla. Se su `<host>:8000` nessuno risponde, `loadData()` degrada come sempre ai JSON statici serviti da HA (sola lettura, hint rosso sotto lo status). Pagina aperta da `file://` → resta relativo (fallback `localStorage`).
+- **`apiBaseUrl`** (`initSettings`): un indirizzo salvato in Impostazioni ha sempre la **precedenza** (es. per puntare al backend sul PC di sviluppo); pagina su porta 8000 → percorso relativo; **altrimenti (es. servito da HA su 8123) prova `<host>:8000`** — con il backend come add-on, HA e backend vivono sullo stesso host, quindi da HA funziona tutto senza configurare nulla. Se su `<host>:8000` nessuno risponde, `loadData()` tenta ancora i JSON statici, ma dalla bonifica /local non esistono più in `www/` → resta l'errore con hint rosso (scelta voluta). Pagina aperta da `file://` → resta relativo (fallback `localStorage`).
 
 ## No-cache del frontend
 
@@ -53,7 +57,7 @@ Il frontend è servito sempre con header **`Cache-Control: no-cache`** (meta tag
 ## Degradazione con grazia
 
 - NAS offline (dal PC) → il backend PC lavora in solo-locale; il mirror riprende quando il NAS torna.
-- Add-on fermo e PC spento → da HA (8123) si fa login e si leggono i dati statici; inserimento e PDF non disponibili finché uno dei due backend non riparte. L'app segnala lo stato "sola lettura".
+- Add-on fermo e PC spento → da HA (8123) si carica solo la pagina di login: i dati non sono leggibili finché un backend non riparte (la "sola lettura dai JSON statici" è stata rimossa con la bonifica /local: era la falla).
 - In modalità add-on, sync e mirroring sono spenti per definizione (`MODALITA_ADDON`): niente overlay conflitti sul Pi.
 
 ## Accesso da fuori casa via NGINX (preparato l'11/07/2026, in attesa di attivazione)

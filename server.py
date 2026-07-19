@@ -23,7 +23,7 @@ import pdfplumber
 from config import (
     UTENTI_CONFIG, API_KEY_GEMINI, DB_DIR_LOCALE, PDF_DIR, DB_DIR_REMOTA,
     APP_DIR_LOCALE, APP_DIR_REMOTA, APP_SYNC_ESCLUSI, APP_SYNC_EST_ESCLUSE,
-    APP_BACKUP_DIR, MODALITA_ADDON
+    APP_BACKUP_DIR, MODALITA_ADDON, FRONTEND_DIR_REMOTA
 )
 
 # --- UTILITIES DI SINCRONIZZAZIONE NAS ---
@@ -296,12 +296,44 @@ def analizza_stato_applicazione():
 
         dettagli.append(info)
 
+    # Confronto del FRONTEND pubblico (www/Bollette, servito da HA come /local):
+    # deve contenere SOLO i file static/ locali, identici. Ogni voce è marcata
+    # "www:" per distinguerla dal codice backend nell'area privata.
+    frontend_locali = {rel for rel in locali.keys() if rel.startswith("static/")}
+    frontend_remoti = _elenca_file_app(FRONTEND_DIR_REMOTA)
+    for rel in sorted(frontend_locali | set(frontend_remoti.keys())):
+        in_loc = rel in frontend_locali
+        in_rem = rel in frontend_remoti
+        info = {"file": f"www:{rel}", "stato": "identico", "locale_data": "-", "remoto_data": "-"}
+        if in_loc:
+            info["locale_data"] = datetime.fromtimestamp(locali[rel][1]).strftime('%d/%m/%Y %H:%M:%S')
+        if in_rem:
+            info["remoto_data"] = datetime.fromtimestamp(frontend_remoti[rel][1]).strftime('%d/%m/%Y %H:%M:%S')
+        if in_loc and not in_rem:
+            info["stato"] = "solo_locale"
+            conteggi["solo_locale"] += 1
+            richiede_attenzione = True
+        elif in_rem and not in_loc:
+            # File estraneo nella cartella pubblica: da rimuovere (la pubblicazione lo farà).
+            info["stato"] = "solo_remoto"
+            conteggi["solo_remoto"] += 1
+            richiede_attenzione = True
+        elif locali[rel][0] != frontend_remoti[rel][0] or \
+                _hash_file(os.path.join(APP_DIR_LOCALE, rel)) != _hash_file(os.path.join(FRONTEND_DIR_REMOTA, rel)):
+            info["stato"] = "diverso"
+            conteggi["diversi"] += 1
+            richiede_attenzione = True
+        else:
+            conteggi["identici"] += 1
+        dettagli.append(info)
+
     report = {
         "stato": "online",
         "stessa_radice": False,
         "remoto_presente": True,
         "app_dir_locale": APP_DIR_LOCALE,
         "app_dir_remota": APP_DIR_REMOTA,
+        "frontend_dir_remota": FRONTEND_DIR_REMOTA,
         "dettagli": dettagli,
         "riepilogo": conteggi
     }
@@ -310,17 +342,19 @@ def analizza_stato_applicazione():
 def _backup_codice_nas():
     # Salva in locale (APP_BACKUP_DIR/nas_<timestamp>/) una copia del codice app
     # attualmente presente sul NAS, PRIMA di sovrascriverlo. Rete di sicurezza.
+    # Copre entrambe le destinazioni: l'area privata (codice backend) in app/ e
+    # la cartella pubblica www (frontend statico) in www/.
     # Restituisce (ok, percorso_backup_o_messaggio_errore).
-    remoti = _elenca_file_app(APP_DIR_REMOTA)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     dest_root = os.path.join(APP_BACKUP_DIR, f"nas_{timestamp}")
     try:
         os.makedirs(dest_root, exist_ok=True)
-        for rel in remoti.keys():
-            src = os.path.join(APP_DIR_REMOTA, rel)
-            dst = os.path.join(dest_root, rel)
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.copy2(src, dst)
+        for radice, sottocartella in ((APP_DIR_REMOTA, "app"), (FRONTEND_DIR_REMOTA, "www")):
+            for rel in _elenca_file_app(radice).keys():
+                src = os.path.join(radice, rel)
+                dst = os.path.join(dest_root, sottocartella, rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
         return True, dest_root
     except Exception as e:
         return False, f"Errore durante il backup del NAS: {e}"
@@ -397,6 +431,44 @@ def pubblica_app_su_nas():
             cancellati.append(rel)
         except Exception as e:
             errori.append({"file": rel, "azione": "cancellazione", "errore": str(e)})
+
+    # 3) FRONTEND pubblico: specchio esatto dei SOLI file static/ verso la
+    #    cartella www servita da HA come /local (bonifica 2026-07-19: in www
+    #    non deve vivere nient'altro — niente codice backend, dati o segreti).
+    #    La struttura resta www/Bollette/static/... così l'URL /local/Bollette/
+    #    static/index.html non cambia.
+    frontend_locali = {rel for rel in locali.keys() if rel.replace("\\", "/").startswith("static/")}
+    try:
+        os.makedirs(FRONTEND_DIR_REMOTA, exist_ok=True)
+        frontend_remoti = _elenca_file_app(FRONTEND_DIR_REMOTA)
+    except Exception as e:
+        frontend_remoti = {}
+        errori.append({"file": FRONTEND_DIR_REMOTA, "azione": "frontend", "errore": str(e)})
+
+    for rel in frontend_locali:
+        src = os.path.join(APP_DIR_LOCALE, rel)
+        dst = os.path.join(FRONTEND_DIR_REMOTA, rel)
+        try:
+            serve_copia = True
+            if rel in frontend_remoti and locali[rel][0] == frontend_remoti[rel][0]:
+                if _hash_file(src) == _hash_file(dst):
+                    serve_copia = False
+            if serve_copia:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+                copiati.append(f"www:{rel}")
+        except Exception as e:
+            errori.append({"file": f"www:{rel}", "azione": "copia", "errore": str(e)})
+
+    for rel in frontend_remoti.keys():
+        if rel in frontend_locali:
+            continue
+        dst = os.path.join(FRONTEND_DIR_REMOTA, rel)
+        try:
+            os.remove(dst)
+            cancellati.append(f"www:{rel}")
+        except Exception as e:
+            errori.append({"file": f"www:{rel}", "azione": "cancellazione", "errore": str(e)})
 
     report = {
         "backup_dir": backup_info,
@@ -503,23 +575,6 @@ def parse_pdf_gemini(text: str, utility_type: str):
         return None
 
 # --- API ENDPOINTS ---
-
-async def api_login(request: Request):
-    try:
-        body = await request.json()
-        username = body.get("username")
-        password = body.get("password")
-        
-        if username in UTENTI_CONFIG and UTENTI_CONFIG[username]["password"] == password:
-            return JSONResponse({
-                "success": True,
-                "username": username,
-                "ruolo": UTENTI_CONFIG[username]["ruolo"],
-                "prefix": UTENTI_CONFIG[username]["db_prefix"]
-            })
-        return JSONResponse({"success": False, "message": "Credenziali non valide."}, status_code=401)
-    except Exception as e:
-        return JSONResponse({"success": False, "message": str(e)}, status_code=400)
 
 async def api_get_data(request: Request):
     params = request.query_params
@@ -745,7 +800,8 @@ async def api_app_publish(request: Request):
 
 # Rotte API dell'applicazione
 routes = [
-    Route("/api/login", api_login, methods=["POST"]),
+    # /api/login non esiste più: il login è la sola scelta del profilo, lato
+    # client (bonifica 2026-07-19: rimosse le password in chiaro da config.py).
     Route("/api/data", api_get_data, methods=["GET"]),
     Route("/api/save", api_save_data, methods=["POST"]),
     Route("/api/upload-pdf", api_upload_pdf, methods=["POST"]),

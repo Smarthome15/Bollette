@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.4
+
+- **Bonifica /local (sicurezza)**: il codice dell'app ora vive nell'area
+  PRIVATA `/homeassistant/bollette_app` (o `/config/bollette_app`), NON più
+  sotto `www/` — tutto ciò che sta in `www/` è servito da HA come `/local/`
+  senza autenticazione (e risultava raggiungibile anche da internet via proxy).
+  In `www/Bollette` resta solo il frontend statico. I vecchi percorsi `www/`
+  restano come fallback transitorio per il primo avvio.
+
 ## 1.0.3
 
 - **Fix decisivo**: sul filesystem del Pi la cartella dell'app è

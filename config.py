@@ -4,8 +4,16 @@ import os
 # Percorso locale del database contenente i file JSON
 DB_DIR_LOCALE = "database"
 
-# Il percorso di rete SMB verso la cartella www di Home Assistant (NAS)
-DB_DIR_REMOTA = r"\\192.168.1.15\config\www\bollette\database"
+# Il percorso di rete SMB verso l'area PRIVATA dell'app su Home Assistant (NAS).
+# Dal 2026-07-19 i dati NON stanno più sotto www/: tutto ciò che è in www/ viene
+# servito da HA come /local/ SENZA autenticazione (verificato esposto anche da
+# internet via proxy NGINX porta 48443). In /config/bollette_app HA non serve
+# nulla: i file sono raggiungibili solo via API del backend (porta 8000).
+DB_DIR_REMOTA = r"\\192.168.1.15\config\bollette_app\database"
+
+# La cartella PUBBLICA servita da HA come /local/Bollette: contiene SOLO il
+# frontend statico (static/), nessun dato e nessun segreto.
+FRONTEND_DIR_REMOTA = r"\\192.168.1.15\config\www\Bollette"
 
 # --- Modalità ADD-ON (backend dentro Home Assistant OS sul Raspberry) ---
 # Quando il backend gira come add-on HA (il run.sh dell'add-on esporta
@@ -55,12 +63,15 @@ if not API_KEY_GEMINI:
     except ImportError:
         API_KEY_GEMINI = ""
 
-# Configurazione utenti e profili database associati
+# Configurazione utenti e profili database associati.
+# NIENTE password: il login è la sola scelta del profilo, lato client
+# (PROFILI_UTENTE in app.js). Le vecchie password in chiaro sono state rimosse
+# il 2026-07-19 (bonifica /local): erano esposte e comunque non più usate.
 UTENTI_CONFIG = {
-    "Matteo": {"password": "passwordmatteo", "ruolo": "admin", "db_prefix": "UserA"},
-    "Dario":  {"password": "passworddario",  "ruolo": "user",  "db_prefix": "UserB"},
-    "Test":   {"password": "passwordtest",   "ruolo": "user",  "db_prefix": "UserC"},
-    "Test_2": {"password": "passwordtest2",  "ruolo": "user",  "db_prefix": "UserD"}
+    "Matteo": {"ruolo": "admin", "db_prefix": "UserA"},
+    "Dario":  {"ruolo": "user",  "db_prefix": "UserB"},
+    "Test":   {"ruolo": "user",  "db_prefix": "UserC"},
+    "Test_2": {"ruolo": "user",  "db_prefix": "UserD"}
 }
 
 # Assicuriamoci che la cartella locale esista

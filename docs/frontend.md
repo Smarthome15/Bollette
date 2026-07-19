@@ -19,7 +19,7 @@
 ## Login e caricamento dati
 
 - **Login senza password**: `handleLogin` + `PROFILI_UTENTE`. È tutto lato client, quindi funziona anche col backend spento. Il profilo scelto fissa il `prefix`.
-- **`loadData`** scarica i dati dell'utente (o li legge da `localStorage` / dai JSON statici serviti da HA se il backend è offline) e li mette in `state.data`.
+- **`loadData`** scarica i dati dell'utente (o li legge da `localStorage` se in storage mode `local`) e li mette in `state.data`. Il vecchio ripiego "JSON statici da HA a backend offline" non funziona più dalla bonifica /local del 19/07/2026 (i dati non stanno più in `www/`): il tentativo resta nel codice ma fallisce con l'hint rosso.
 - Al login, `checkSyncAndLoad` confronta locale e NAS e, se divergono, mostra l'overlay di risoluzione conflitti (vedi [deploy-nas](deploy-nas.md)).
 
 ## Principio fondamentale: periodo di competenza, NON data di emissione

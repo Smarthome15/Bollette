@@ -1,11 +1,12 @@
 # Add-on locale Home Assistant: backend Python dell'app Bollette/ConsumiCasa.
 # Vive in /addons/bollette_backend sul Raspberry (consegna: addon/deploy_addon.ps1).
-# Il CODICE dell'app NON è dentro l'add-on: gira da /homeassistant/www/bollette
-# (la stessa cartella pubblicata con "Pubblica su NAS"), così pubblicare +
-# riavviare l'add-on = deploy. Vincoli concordati con Jarvis (11/07/2026):
+# Il CODICE dell'app NON è dentro l'add-on: gira da /homeassistant/bollette_app
+# (area PRIVATA, fuori da www/ — bonifica /local del 2026-07-19; la stessa
+# cartella pubblicata con "Pubblica su NAS"), così pubblicare + riavviare
+# l'add-on = deploy. Vincoli concordati con Jarvis (11/07/2026):
 # boot auto + watchdog, chiave Gemini nelle options, log sobri.
 name: "Bollette Backend (ConsumiCasa)"
-version: "1.0.3"
+version: "1.0.4"
 slug: "bollette_backend"
 description: "Backend Python dell'app Bollette/ConsumiCasa: API, salvataggio JSON, estrazione bollette PDF via Gemini."
 url: "https://github.com/Smarthome15/Bollette"

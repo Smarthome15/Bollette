@@ -93,15 +93,15 @@ I dati vivono in file JSON in `database/`, **un file per ogni combinazione utent
 
 ### Login (senza password) e Storage mode
 
-- **Login**: si sceglie solo il profilo, **senza password** (`handleLogin` + `PROFILI_UTENTE` in `app.js`). È tutto lato client, quindi funziona anche col backend spento. Il profilo determina il `prefix` dei file dati. (L'endpoint `/api/login` esiste ancora ma non è più usato dal frontend.)
+- **Login**: si sceglie solo il profilo, **senza password** (`handleLogin` + `PROFILI_UTENTE` in `app.js`). È tutto lato client, quindi funziona anche col backend spento. Il profilo determina il `prefix` dei file dati. (L'endpoint `/api/login` e le password in `config.py` sono stati **rimossi** con la bonifica /local del 19/07/2026.)
 - **`state.storageMode`** (salvato in `localStorage`): `server` usa le API; `local` usa solo `localStorage` del browser (parsing PDF disattivato, scritture accodate).
-- **`apiBaseUrl`** (`initSettings`): un indirizzo salvato in Impostazioni ha sempre la **precedenza** (es. backend sul PC di sviluppo); pagina su porta 8000 → relativo; **altrimenti (es. servito da HA su 8123) prova `<host>:8000`** — dal trasloco del backend come **add-on HA** (11/07/2026), backend e HA vivono sullo stesso host, quindi da HA funziona tutto senza configurare nulla. Se su `<host>:8000` non risponde niente, `loadData()` degrada come prima ai JSON statici (sola lettura, hint rosso sotto lo status); pagina aperta da `file://` → resta relativo (fallback `localStorage`).
+- **`apiBaseUrl`** (`initSettings`): un indirizzo salvato in Impostazioni ha sempre la **precedenza** (es. backend sul PC di sviluppo); pagina su porta 8000 → relativo; **altrimenti (es. servito da HA su 8123) prova `<host>:8000`** — dal trasloco del backend come **add-on HA** (11/07/2026), backend e HA vivono sullo stesso host, quindi da HA funziona tutto senza configurare nulla. Se su `<host>:8000` non risponde niente, `loadData()` tenta ancora i JSON statici, ma dalla bonifica /local (19/07/2026) i dati NON sono più in `www/` → il tentativo fallisce e resta l'errore con hint rosso (scelta voluta: la sola lettura senza login era la falla); pagina aperta da `file://` → resta relativo (fallback `localStorage`).
 
 ### Controllo codice app e pubblicazione sul NAS
 
-Distinto dalla sincronizzazione DATI: confronta/pubblica il **codice** dell'app (locale `APP_DIR_LOCALE` vs NAS `APP_DIR_REMOTA = genitore di DB_DIR_REMOTA`, cioè `\\192.168.1.15\config\www\bollette`).
-- `GET /api/app/status` (`analizza_stato_applicazione`): confronto file-per-file, dimensione poi hash MD5, sola lettura. Esclude `database`, `.venv`, `.git`, `__pycache__`, `.claude`, `backup_nas` (vedi `APP_SYNC_ESCLUSI`). UI: riquadro in Impostazioni + banner al login.
-- `POST /api/app/publish` (`pubblica_app_su_nas`): **specchio esatto** locale→NAS (copia diversi/nuovi, cancella dal NAS gli extra — mai i dati). **Prima** salva un backup del codice NAS in `backup_nas/nas_<timestamp>/` (`_backup_codice_nas`); se il backup fallisce, non pubblica. Include `secrets_local.py`. UI: pulsante "Pubblica su NAS" con conferma.
+Distinto dalla sincronizzazione DATI. Dalla **bonifica /local (19/07/2026)** la pubblicazione ha **due target**: il codice completo va nell'area PRIVATA `APP_DIR_REMOTA = genitore di DB_DIR_REMOTA`, cioè `\\192.168.1.15\config\bollette_app` (HA non la serve via web); il SOLO frontend `static/` va anche nella cartella pubblica `FRONTEND_DIR_REMOTA = \\192.168.1.15\config\www\Bollette` (servita come `/local/Bollette/static/…` **senza autenticazione** — mai metterci altro: dati, segreti e codice backend lì erano scaricabili da chiunque, vedi bacheca 19/07/2026).
+- `GET /api/app/status` (`analizza_stato_applicazione`): confronto file-per-file, dimensione poi hash MD5, sola lettura; controlla anche il frontend pubblico (voci marcate `www:`) e segnala come `solo_remoto` ogni file estraneo in `www/Bollette`. Esclude `database`, `.venv`, `.git`, `__pycache__`, `.claude`, `backup_nas` (vedi `APP_SYNC_ESCLUSI`). UI: riquadro in Impostazioni + banner al login.
+- `POST /api/app/publish` (`pubblica_app_su_nas`): **specchio esatto** locale→NAS su entrambi i target (copia diversi/nuovi, cancella gli extra — mai i dati; in `www/Bollette` cancella tutto ciò che non è `static/`). **Prima** salva un backup del codice NAS in `backup_nas/nas_<timestamp>/` (`_backup_codice_nas`, sottocartelle `app/` e `www/`); se il backup fallisce, non pubblica. Include `secrets_local.py` (solo nell'area privata). UI: pulsante "Pubblica su NAS" con conferma.
 
 ### Sincronizzazione NAS
 
@@ -116,9 +116,10 @@ Il backend specchia ogni salvataggio sul NAS Home Assistant via SMB (`DB_DIR_REM
 
 ## Infrastruttura reale (rete)
 
-- **HA / NAS = `192.168.1.15`** (Home Assistant OS su Raspberry Pi, ~4 GB RAM). Serve l'app come file **statici** da `/config/www/bollette` sulla porta **8123** e — dall'11/07/2026 — esegue il **backend come add-on locale** ("Bollette Backend", porta **8000** sullo stesso IP, boot auto + watchdog; vedi `addon/` e [deploy-nas](docs/deploy-nas.md)). Con l'add-on attivo il PC non serve più: l'app completa risponde su `http://192.168.1.15:8000` e i dati vivono SOLO sul Pi (`/config/www/bollette/database`, inclusi nei backup HA).
+- **HA / NAS = `192.168.1.15`** (Home Assistant OS su Raspberry Pi, ~4 GB RAM). Dalla **bonifica /local del 19/07/2026**: in `www/` c'è SOLO il frontend statico (`/config/www/Bollette/static`, servito su 8123 come `/local/Bollette/static/index.html`, senza autenticazione — per questo non deve contenere altro); **codice backend + dati + segreti** vivono nell'area privata `/config/bollette_app` (non servita da HA, inclusa nei backup nativi). L'add-on "Bollette Backend" (porta **8000**, boot auto + watchdog, v1.0.4) esegue il codice da lì; l'app completa risponde su `http://192.168.1.15:8000` e i dati stanno SOLO sul Pi (`/config/bollette_app/database`).
 - **Backend Python su PC** (modalità sviluppo/riserva): `run.bat`/`.venv`, IP DHCP (es. `192.168.1.165:8000`). Resta la macchina da cui si **pubblica il codice** sul NAS e una copia di riserva dei dati (al login scarica dal NAS).
-- Accesso da HA (8123): con l'add-on attivo → tutto (il frontend punta da solo a `<host>:8000`, incl. PDF via Gemini); con tutto spento → login + **sola lettura** dei dati statici.
+- Accesso da HA (8123): con l'add-on attivo → tutto (il frontend punta da solo a `<host>:8000`, incl. PDF via Gemini); con l'add-on spento → solo la pagina di login con errore dati (il vecchio ripiego "sola lettura dai JSON statici" non esiste più: era la falla /local).
+- **Accesso remoto**: HA è raggiungibile da internet via `https://smrthome15.duckdns.org:48443` (add-on NGINX SSL proxy + port-forward). `/local/` resta senza login anche da lì: per questo in `www/` non deve MAI stare nulla di sensibile (verificato da Jarvis il 19/07/2026, chiave scaricata da internet prima della bonifica).
 
 ## Stato attuale e prossimi passi (luglio 2026)
 
@@ -127,6 +128,15 @@ Fatto e in produzione (committato su `main`, pubblicato sul NAS): scheda Audit f
 ### Già su GitHub `main` (pushato)
 
 Dashboard filtro Anno + fix trend/consumi; import backup sicuro; guardie Letture (commit `5b6f1d1`). Nuova tab **Andamento Prezzi** + estrazione `quota_fissa`/`quota_energia`/`prezzo_unitario_energia` da Gemini, e documentazione `docs/` (commit `f301de2`). **Dati UserA sul NAS** già aggiornati: correzione luce F1 31/12/2024 (333→339, tot 1086); periodi/`consumo_fatturato` popolati su tutte le bollette storiche. Backup in `backup_nas/` (`fix_luce_F1_…`, `fix_audit_periodi_…`).
+
+### Lavori del 19/07/2026 — bonifica /local (sicurezza) — FATTA e in produzione
+
+Origine: verifica di sicurezza di Jarvis (bacheca 19/07/2026) — tutta `www/` è servita da HA come `/local/` **senza autenticazione**, e via proxy NGINX (porta 48443, DuckDNS) risultava scaricabile **da internet**: chiave Gemini, password, `.git/`, bollette PDF, dati. Bonifica eseguita col "vai" di Matteo:
+- **Dati+codice+segreti** spostati in `/config/bollette_app` (area privata); in `www/Bollette` resta SOLO `static/`. Residui storici eliminati (`.git`, `.venv`, `ConsumiCasaPython/`). Verificato: 404 su tutti i vecchi URL sensibili, 200 sul frontend.
+- **Password rimosse** da `config.py` (con l'endpoint morto `/api/login`); chiave Gemini **rigenerata**.
+- **Add-on 1.0.4**: `run.sh` cerca l'app in `bollette_app` (fallback www solo transitorio). **Pubblicazione a doppio target** e `/api/app/status` con controllo della cartella pubblica (vedi sezione Controllo codice).
+- Backup pre-bonifica in `backup_nas/bonifica_20260719/` (copia integrale della vecchia `www/Bollette` inclusi `.git` e database).
+- **Rinuncia consapevole**: senza dati in `www/` il vecchio fallback "sola lettura da HA a backend spento" non esiste più.
 
 ### Lavori dell'11/07/2026 — committati e pubblicati (add-on: da installare)
 
@@ -165,4 +175,4 @@ Piste aperte (non ancora fatte), per quando si riprende:
 - ~~Scrittura atomica dei JSON~~ — **fatta** il 12/07/2026 (commit `52426cc`): `scrivi_json_atomico`/`copia_file_dati_atomica` in `server.py` (save, mirroring NAS, sync per-file); attivo sul Pi dal primo riavvio dell'add-on successivo.
 - **Rafforzare la catena di backup dei dati** ora che il Pi è l'unica fonte di verità (vedi vincolo segnalato da Jarvis in bacheca, 11/07/2026: Google Drive Backup settimanale ×2 copie, 1,5 GB liberi su Drive).
 - ~~Accesso da fuori casa~~ — **fatto** l'11/07/2026 (NGINX `/bollette-api/` same-origin, scritture solo LAN; vedi [deploy-nas](docs/deploy-nas.md)).
-- **Chiave Gemini**: gestita dall'utente su Google AI Studio; la vecchia chiave (non valida) resta nella storia git ma è inattiva. La chiave attiva vive in `secrets_local.py` (non versionato); su una macchina nuova si recupera dal NAS (`\\192.168.1.15\config\www\bollette\secrets_local.py`).
+- **Chiave Gemini**: gestita dall'utente su Google AI Studio; rigenerata il 19/07/2026 (la precedente era esposta in `/local` ed è revocata; le chiavi nella storia git sono tutte inattive). La chiave attiva vive in `secrets_local.py` (non versionato) e nelle options dell'add-on (che hanno la precedenza); su una macchina nuova si recupera dal NAS (`\\192.168.1.15\config\bollette_app\secrets_local.py`).

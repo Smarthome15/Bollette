@@ -1,18 +1,20 @@
 # Bollette Backend (ConsumiCasa)
 
 Backend Python dell'app **Bollette/ConsumiCasa** come add-on locale di Home
-Assistant OS: API REST, salvataggio dei JSON in `/config/www/bollette/database`,
+Assistant OS: API REST, salvataggio dei JSON in `/config/bollette_app/database`,
 archiviazione e **estrazione dati dalle bollette PDF via Gemini**. Con questo
 add-on il PC non serve più: l'app completa risponde su `http://<ip-ha>:8000`.
 
 ## Come funziona
 
 - Il **codice dell'app non è dentro l'add-on**: gira da
-  `/homeassistant/www/bollette` (cioè `/config/www/bollette`), la stessa
-  cartella che il PC di sviluppo aggiorna con *Impostazioni → Pubblica su NAS*.
+  `/homeassistant/bollette_app` (cioè `/config/bollette_app`, area PRIVATA
+  fuori da `www/` — bonifica /local del 19/07/2026), la stessa cartella che il
+  PC di sviluppo aggiorna con *Impostazioni → Pubblica su NAS*.
   **Deploy = pubblica + riavvia l'add-on.**
-- I **dati** restano in `/config/www/bollette/database`: unica fonte di verità,
-  inclusa nei backup di Home Assistant.
+- I **dati** restano in `/config/bollette_app/database`: unica fonte di verità,
+  inclusa nei backup di Home Assistant. In `www/Bollette` c'è SOLO il frontend
+  statico (`/local` è servito da HA senza autenticazione: mai metterci segreti).
 - In modalità add-on il backend disattiva da solo la sincronizzazione NAS
   (non serve più: è già "sul NAS") — flag `BOLLETTE_ADDON=1` in `run.sh`.
 

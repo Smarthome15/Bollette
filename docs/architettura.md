@@ -23,7 +23,6 @@ All'avvio `server.py`:
 
 | Endpoint | Metodo | Cosa fa |
 |---|---|---|
-| `/api/login` | POST | Autenticazione username/password (esiste ancora ma il frontend non lo usa più: il login è lato client). |
 | `/api/data` | GET | Legge i record di un'utenza. Parametri: `user`, `utility` (LUCE/GAS/ACQUA), `type` (`bollette`/`manual`). |
 | `/api/save` | POST | Sovrascrive l'**intero array** di record di un'utenza (non un delta) e lo specchia sul NAS. |
 | `/api/upload-pdf` | POST | Archivia un PDF in `database/pdfs/` e restituisce il `pdf_path` da salvare nel record. |
