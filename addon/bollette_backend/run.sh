@@ -7,6 +7,12 @@ set -e
 GEMINI_API_KEY="$(python3 -c "import json; print(json.load(open('/data/options.json')).get('gemini_api_key') or '')" 2>/dev/null || true)"
 export GEMINI_API_KEY
 
+# Chiave di accesso alle API (bonifica accessi 2026-07-26): se valorizzata nelle
+# options ha la precedenza; altrimenti il backend la legge da secrets_local.py
+# (che arriva con la pubblicazione nell'area privata). MAI stamparla nei log.
+BOLLETTE_ACCESS_KEY="$(python3 -c "import json; print(json.load(open('/data/options.json')).get('chiave_accesso') or '')" 2>/dev/null || true)"
+export BOLLETTE_ACCESS_KEY
+
 # Modalità add-on: niente sync/mirroring NAS (i dati locali SONO quelli sul NAS).
 export BOLLETTE_ADDON=1
 

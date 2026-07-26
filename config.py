@@ -63,6 +63,23 @@ if not API_KEY_GEMINI:
     except ImportError:
         API_KEY_GEMINI = ""
 
+# Chiave di accesso alle API (bonifica accessi 2026-07-26, concordata in bacheca
+# con Jarvis). Il backend la esige su TUTTE le rotte tranne /api/health: senza,
+# /api/data e i PDF delle bollette erano leggibili da chiunque via proxy
+# /bollette-api/ (stessa lezione del 19/07: sola lettura senza login = falla).
+# NON va scritta qui (file versionato). Letta, in ordine:
+#   1) variabile d'ambiente BOLLETTE_ACCESS_KEY (options dell'add-on, via run.sh);
+#   2) file locale non versionato secrets_local.py (variabile CHIAVE_ACCESSO).
+# Se assente il backend fallisce CHIUSO: 503 su tutto tranne /api/health
+# (mai "aperto per sbaglio" per una chiave dimenticata).
+CHIAVE_ACCESSO = os.environ.get("BOLLETTE_ACCESS_KEY", "")
+if not CHIAVE_ACCESSO:
+    try:
+        from secrets_local import CHIAVE_ACCESSO as _SECRET_ACCESSO  # type: ignore
+        CHIAVE_ACCESSO = _SECRET_ACCESSO or ""
+    except ImportError:
+        CHIAVE_ACCESSO = ""
+
 # Configurazione utenti e profili database associati.
 # NIENTE password: il login è la sola scelta del profilo, lato client
 # (PROFILI_UTENTE in app.js). Le vecchie password in chiaro sono state rimosse

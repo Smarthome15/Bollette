@@ -4,6 +4,8 @@
 const state = {
     user: null, // conterrà { username, ruolo, prefix }
     apiBaseUrl: "",
+    accessKey: "",     // chiave di accesso alle API (localStorage per dispositivo, mai nel codice)
+    pdfBlobUrl: null,  // object URL del PDF aperto nel modal (i PDF viaggiano via fetch con chiave)
     storageMode: "server", // 'server' o 'local'
     data: {
         // RIFIUTI (TARI) è solo-bollette: niente letture (readings resta a 3 utenze).
@@ -99,10 +101,22 @@ document.addEventListener("DOMContentLoaded", () => {
     lucide.createIcons();
 });
 
+// Header per le chiamate API (bonifica accessi 2026-07-26): il backend esige
+// X-Bollette-Key su tutte le rotte tranne /api/health. La chiave vive SOLO nel
+// localStorage del dispositivo (campo in Impostazioni), mai nel codice — così
+// il frontend pubblico in /local non rivela nulla. extra = header da unire
+// (es. Content-Type per i POST JSON).
+function apiHeaders(extra) {
+    const h = Object.assign({}, extra || {});
+    if (state.accessKey) h["X-Bollette-Key"] = state.accessKey;
+    return h;
+}
+
 // Configura l'indirizzo delle API in base all'ambiente
 function initSettings() {
     const savedApiUrl = localStorage.getItem("consumicasa_api_url");
     const savedStorageMode = localStorage.getItem("consumicasa_storage_mode");
+    state.accessKey = localStorage.getItem("consumicasa_chiave_accesso") || "";
     
     if (savedStorageMode) {
         state.storageMode = savedStorageMode;
@@ -139,6 +153,8 @@ function initSettings() {
     // Compila i campi form impostazioni
     document.getElementById("settings-storage-mode").value = state.storageMode;
     document.getElementById("settings-api-url").value = state.apiBaseUrl;
+    const elKey = document.getElementById("settings-access-key");
+    if (elKey) elKey.value = state.accessKey;
 
     // Compila i campi delle soglie promemoria dati (per utenza).
     const soglie = getSoglieDati();
@@ -152,6 +168,8 @@ function initSettings() {
 
     if (state.storageMode === "local") {
         document.getElementById("settings-api-url-group").classList.add("hidden");
+        const keyGroup = document.getElementById("settings-access-key-group");
+        if (keyGroup) keyGroup.classList.add("hidden");
     }
 }
 
@@ -519,12 +537,15 @@ function handleLogout() {
 function saveSettings() {
     const mode = document.getElementById("settings-storage-mode").value;
     const apiUrl = document.getElementById("settings-api-url").value.trim();
-    
+    const accessKey = (document.getElementById("settings-access-key")?.value || "").trim();
+
     localStorage.setItem("consumicasa_storage_mode", mode);
     localStorage.setItem("consumicasa_api_url", apiUrl);
-    
+    localStorage.setItem("consumicasa_chiave_accesso", accessKey);
+
     state.storageMode = mode;
     state.apiBaseUrl = apiUrl;
+    state.accessKey = accessKey;
     
     alert("Impostazioni salvate con successo! L'applicazione verrà ricaricata.");
     window.location.reload();
@@ -601,9 +622,17 @@ async function loadData() {
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 1500);
-            const check = await fetch(`${state.apiBaseUrl}/api/data?user=${state.user.username}&utility=LUCE&type=bill`, { signal: controller.signal });
+            const check = await fetch(`${state.apiBaseUrl}/api/data?user=${state.user.username}&utility=LUCE&type=bill`, { signal: controller.signal, headers: apiHeaders() });
             if (check.ok) online = true;
             clearTimeout(timeoutId);
+            if (!online && (check.status === 401 || check.status === 503)) {
+                // Il backend c'è ma rifiuta la chiave (401: manca/sbagliata qui;
+                // 503: non configurata lato server). Niente fallback: serve la
+                // chiave giusta in Impostazioni, e l'avviso lo dice chiaro.
+                updateBackendStatusBadge("no-key");
+                renderDashboard();
+                return;
+            }
         } catch(e) {
             online = false;
         }
@@ -614,12 +643,12 @@ async function loadData() {
             
             for (const ut of utilities) {
                 // Carica bollette (tutte le utenze, RIFIUTI incluso)
-                const bRes = await fetch(`${state.apiBaseUrl}/api/data?user=${state.user.username}&utility=${ut}&type=bill`);
+                const bRes = await fetch(`${state.apiBaseUrl}/api/data?user=${state.user.username}&utility=${ut}&type=bill`, { headers: apiHeaders() });
                 if (bRes.ok) state.data.bills[ut] = await bRes.json();
 
                 // Carica letture solo per le utenze con contatore (no RIFIUTI)
                 if (ut !== "RIFIUTI") {
-                    const rRes = await fetch(`${state.apiBaseUrl}/api/data?user=${state.user.username}&utility=${ut}&type=manual`);
+                    const rRes = await fetch(`${state.apiBaseUrl}/api/data?user=${state.user.username}&utility=${ut}&type=manual`, { headers: apiHeaders() });
                     if (rRes.ok) state.data.readings[ut] = await rRes.json();
                 }
             }
@@ -700,7 +729,7 @@ async function saveUtilityData(utility, dataType, recordModificato) {
     try {
         const response = await fetch(`${state.apiBaseUrl}/api/save`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: apiHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
                 user: state.user.username,
                 utility: utility,
@@ -767,7 +796,7 @@ async function syncPendingReadingsToServer() {
         
         for (const ut of Object.keys(grouped)) {
             // Carica le letture correnti dal server
-            const res = await fetch(`${state.apiBaseUrl}/api/data?user=${state.user.username}&utility=${ut}&type=manual`);
+            const res = await fetch(`${state.apiBaseUrl}/api/data?user=${state.user.username}&utility=${ut}&type=manual`, { headers: apiHeaders() });
             if (res.ok) {
                 const serverReadings = await res.json();
                 
@@ -783,7 +812,7 @@ async function syncPendingReadingsToServer() {
                 serverReadings.sort((a, b) => a.data.localeCompare(b.data));
                 await fetch(`${state.apiBaseUrl}/api/save`, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: apiHeaders({ "Content-Type": "application/json" }),
                     body: JSON.stringify({
                         user: state.user.username,
                         utility: ut,
@@ -824,6 +853,14 @@ function updateBackendStatusBadge(status) {
         statusText.textContent = "NAS Statico (Senza Python)";
         statusDot.style.backgroundColor = "#fb923c";
         statusDot.style.boxShadow = "0 0 8px #fb923c";
+    } else if (status === "no-key") {
+        // Il backend risponde ma rifiuta: chiave di accesso mancante o errata
+        // su questo dispositivo (401), oppure non configurata lato server (503).
+        statusDot.className = "status-dot";
+        statusText.textContent = "Chiave di accesso mancante o errata";
+        statusText.style.color = "#ef4444"; // Rosso
+        statusDot.style.backgroundColor = "#ef4444";
+        statusDot.style.boxShadow = "0 0 8px #ef4444";
     } else {
         statusDot.className = "status-dot offline";
         statusText.textContent = "Backend Disconnesso";
@@ -844,6 +881,12 @@ function updateBackendStatusBadge(status) {
     const hintEl = document.getElementById("status-readonly-hint");
     if (hintEl) {
         hintEl.classList.toggle("hidden", status !== "ha-static");
+    }
+
+    // Avviso in Impostazioni: chiave di accesso mancante/errata (backend che risponde 401/503).
+    const keyAlertEl = document.getElementById("access-key-alert");
+    if (keyAlertEl) {
+        keyAlertEl.classList.toggle("hidden", status !== "no-key");
     }
 }
 
@@ -888,6 +931,7 @@ async function handlePdfSelected(file) {
 
         const response = await fetch(`${state.apiBaseUrl}/api/parse-pdf`, {
             method: "POST",
+            headers: apiHeaders(), // niente Content-Type: lo mette il browser (FormData)
             body: formData
         });
 
@@ -1008,6 +1052,7 @@ async function saveNewBill(e) {
             
             const uploadRes = await fetch(`${state.apiBaseUrl}/api/upload-pdf`, {
                 method: "POST",
+                headers: apiHeaders(),
                 body: formData
             });
             if (uploadRes.ok) {
@@ -1981,10 +2026,28 @@ function renderBillsTable() {
     lucide.createIcons();
 }
 
-function openPdfModal(url, title, bill) {
+async function openPdfModal(url, title, bill) {
     document.getElementById("modal-title").textContent = title;
-    document.getElementById("modal-pdf-frame").src = url;
-    
+
+    // I PDF sono dietro la chiave di accesso: si scaricano via fetch con header
+    // X-Bollette-Key e si mostrano come blob. Così la chiave non compare mai
+    // negli URL (niente ?k= nella history del browser né negli access log NGINX
+    // — condizione concordata con Jarvis in bacheca, 2026-07-26).
+    const frame = document.getElementById("modal-pdf-frame");
+    frame.src = "about:blank";
+    try {
+        const res = await fetch(url, { headers: apiHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        if (state.pdfBlobUrl) URL.revokeObjectURL(state.pdfBlobUrl);
+        state.pdfBlobUrl = URL.createObjectURL(blob);
+        frame.src = state.pdfBlobUrl;
+    } catch (err) {
+        console.error("Impossibile scaricare il PDF:", err);
+        frame.src = "about:blank";
+        alert("Impossibile aprire il PDF: verifica che il backend sia attivo e che la chiave di accesso in Impostazioni sia corretta.");
+    }
+
     // Popola i dati dettaglio sulla destra
     const detailsBox = document.getElementById("modal-details-content");
     const reading = bill.lettura_totale !== undefined ? bill.lettura_totale : (bill.lettura || 0);
@@ -3220,7 +3283,7 @@ async function checkSyncAndLoad() {
     notifyAppCodeStatus();
 
     try {
-        const response = await fetch(`${state.apiBaseUrl}/api/sync/status?user=${state.user.username}`);
+        const response = await fetch(`${state.apiBaseUrl}/api/sync/status?user=${state.user.username}`, { headers: apiHeaders() });
         if (response.ok) {
             const data = await response.json();
             if (data.success && data.has_conflict) {
@@ -3244,7 +3307,7 @@ async function checkSyncAndLoad() {
 async function fetchAppCodeStatus() {
     if (state.storageMode === "local") return null;
     try {
-        const response = await fetch(`${state.apiBaseUrl}/api/app/status`);
+        const response = await fetch(`${state.apiBaseUrl}/api/app/status`, { headers: apiHeaders() });
         if (!response.ok) return null;
         const data = await response.json();
         if (!data.success) return null;
@@ -3394,7 +3457,7 @@ async function publishAppToNas() {
     resultBox.innerHTML = `<p class="help-text">Backup del NAS e pubblicazione in corso…</p>`;
 
     try {
-        const response = await fetch(`${state.apiBaseUrl}/api/app/publish`, { method: "POST" });
+        const response = await fetch(`${state.apiBaseUrl}/api/app/publish`, { method: "POST", headers: apiHeaders() });
         const data = await response.json();
 
         if (response.ok && data.success) {
@@ -3491,7 +3554,7 @@ async function resolveSyncConflict(action, key) {
     try {
         const response = await fetch(`${state.apiBaseUrl}/api/sync/resolve`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: apiHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
                 user: state.user.username,
                 action: action,

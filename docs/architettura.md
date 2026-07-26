@@ -6,7 +6,7 @@
 
 L'app è divisa in due parti che dialogano **solo via API REST JSON**. Non c'è framework frontend e non c'è build step.
 
-- **Backend** — `server.py`: app [Starlette](https://www.starlette.io/) (ASGI) servita da `uvicorn`. Espone gli endpoint `/api/*`, monta i PDF archiviati su `/database/pdfs` e monta `static/` come root del sito. Il CORS è aperto a `*` di proposito, così Home Assistant (porta 8123) può chiamare le API del backend.
+- **Backend** — `server.py`: app [Starlette](https://www.starlette.io/) (ASGI) servita da `uvicorn`. Espone gli endpoint `/api/*`, monta i PDF archiviati su `/database/pdfs` e monta `static/` come root del sito. Il CORS è aperto a `*` di proposito, così Home Assistant (porta 8123) può chiamare le API del backend. Dalla **bonifica accessi (26/07/2026)** tutte le rotte API e i PDF esigono l'header **`X-Bollette-Key`** (middleware `ChiaveAccessoMiddleware`; eccezioni: `/api/health`, muto, e il frontend statico) — dettagli in [deploy-nas](deploy-nas.md).
 - **Frontend** — `static/`: `index.html` (markup e tab), `app.js` (tutta la logica, single-file, attorno a un oggetto globale `state`), `app.css`. Chart.js e Lucide arrivano da CDN.
 
 Il backend **non genera HTML**: serve file statici e risponde JSON. Per aggiornare l'interfaccia basta modificare i file in `static/`.
@@ -21,8 +21,11 @@ All'avvio `server.py`:
 
 ### Endpoint `/api/*`
 
+Tutti (tranne `/api/health`) richiedono l'header `X-Bollette-Key`: senza → 401; server senza chiave configurata → 503 su tutto (fail-closed).
+
 | Endpoint | Metodo | Cosa fa |
 |---|---|---|
+| `/api/health` | GET | Vivo/morto per il watchdog dell'add-on: `{"ok": true}` e nient'altro. Unica rotta **senza chiave**, per questo muta. |
 | `/api/data` | GET | Legge i record di un'utenza. Parametri: `user`, `utility` (LUCE/GAS/ACQUA), `type` (`bollette`/`manual`). |
 | `/api/save` | POST | Sovrascrive l'**intero array** di record di un'utenza (non un delta) e lo specchia sul NAS. |
 | `/api/upload-pdf` | POST | Archivia un PDF in `database/pdfs/` e restituisce il `pdf_path` da salvare nel record. |

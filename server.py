@@ -6,6 +6,7 @@ import re
 import socket
 import shutil
 import hashlib
+import secrets as py_secrets  # compare_digest (non confondere con secrets_local)
 import traceback
 from datetime import datetime
 import webbrowser
@@ -23,7 +24,7 @@ import pdfplumber
 from config import (
     UTENTI_CONFIG, API_KEY_GEMINI, DB_DIR_LOCALE, PDF_DIR, DB_DIR_REMOTA,
     APP_DIR_LOCALE, APP_DIR_REMOTA, APP_SYNC_ESCLUSI, APP_SYNC_EST_ESCLUSE,
-    APP_BACKUP_DIR, MODALITA_ADDON, FRONTEND_DIR_REMOTA
+    APP_BACKUP_DIR, MODALITA_ADDON, FRONTEND_DIR_REMOTA, CHIAVE_ACCESSO
 )
 
 # --- UTILITIES DI SINCRONIZZAZIONE NAS ---
@@ -763,14 +764,11 @@ async def api_sync_resolve(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 async def api_health(request: Request):
-    # Endpoint minimo per il watchdog dell'add-on e per la diagnostica: 200 se il
-    # processo è vivo. 'gemini' dice se la chiave è configurata (utile per capire
-    # al volo perché l'estrazione PDF risulta bloccata).
-    return JSONResponse({
-        "ok": True,
-        "addon": MODALITA_ADDON,
-        "gemini": bool(API_KEY_GEMINI)
-    })
+    # Unica rotta SENZA chiave di accesso (serve al watchdog dell'add-on):
+    # per questo è MUTA — dice solo "vivo", niente flag, conteggi o percorsi
+    # (condizione concordata con Jarvis in bacheca, 2026-07-26: un'eccezione
+    # è una porta, che sia stretta). La diagnostica passa dalle rotte con chiave.
+    return JSONResponse({"ok": True})
 
 async def api_app_status(request: Request):
     # Confronto del CODICE dell'applicazione locale vs NAS (sola lettura).
@@ -838,9 +836,38 @@ class NoCacheStaticMiddleware(BaseHTTPMiddleware):
             response.headers["Expires"] = "0"
         return response
 
-# Configurazione CORS per permettere a Home Assistant (porta 8123) di fare chiamate API
+# Middleware chiave di accesso (bonifica accessi 2026-07-26, piano in bacheca):
+# tutte le rotte API e i PDF archiviati esigono l'header X-Bollette-Key.
+# Restano liberi: /api/health (watchdog, muto) e il frontend statico (che è
+# comunque pubblico via HA). Guardia che fallisce CHIUSA: chiave assente lato
+# server → 503 su tutto (mai aperto per sbaglio); chiave mancante/errata dal
+# client → 401. Il messaggio d'errore non contiene MAI la chiave attesa e
+# questo middleware non logga nulla della richiesta.
+class ChiaveAccessoMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+        protetto = path.startswith("/api/") or path.startswith("/database/pdfs")
+        if not protetto or path == "/api/health":
+            return await call_next(request)
+        if request.method == "OPTIONS":
+            # Preflight CORS: non porta la chiave per costruzione. Le risposte
+            # con i dati restano protette dai rami sotto.
+            return await call_next(request)
+        if not CHIAVE_ACCESSO:
+            return JSONResponse({"error": "chiave_non_configurata"}, status_code=503)
+        fornita = request.headers.get("x-bollette-key", "")
+        if not fornita or not py_secrets.compare_digest(fornita, CHIAVE_ACCESSO):
+            # 401 = chiave mancante o sbagliata; il 404 resta per le rotte
+            # inesistenti (distinzione chiesta da Jarvis per le sue sonde).
+            return JSONResponse({"error": "chiave_non_valida"}, status_code=401)
+        return await call_next(request)
+
+# Configurazione CORS per permettere a Home Assistant (porta 8123) di fare chiamate API.
+# CORS per primo (più esterno): risponde lui ai preflight OPTIONS; la chiave
+# viene verificata subito dopo, prima di qualunque handler.
 middleware = [
     Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]),
+    Middleware(ChiaveAccessoMiddleware),
     Middleware(NoCacheStaticMiddleware)
 ]
 

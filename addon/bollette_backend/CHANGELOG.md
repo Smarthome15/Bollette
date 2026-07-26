@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.5
+
+- **Chiave di accesso alle API (bonifica accessi 2026-07-26)**: il backend
+  esige l'header `X-Bollette-Key` su tutte le rotte tranne `/api/health`
+  (che ora risponde solo `{"ok": true}`, muto). Nuova option facoltativa
+  `chiave_accesso`: se valorizzata ha la precedenza, altrimenti la chiave
+  arriva da `secrets_local.py` nell'area privata. Senza chiave configurata
+  il backend fallisce CHIUSO (503 su tutto tranne health).
+
 ## 1.0.4
 
 - **Bonifica /local (sicurezza)**: il codice dell'app ora vive nell'area

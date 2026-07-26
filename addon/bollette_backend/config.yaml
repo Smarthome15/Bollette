@@ -6,7 +6,7 @@
 # l'add-on = deploy. Vincoli concordati con Jarvis (11/07/2026):
 # boot auto + watchdog, chiave Gemini nelle options, log sobri.
 name: "Bollette Backend (ConsumiCasa)"
-version: "1.0.4"
+version: "1.0.5"
 slug: "bollette_backend"
 description: "Backend Python dell'app Bollette/ConsumiCasa: API, salvataggio JSON, estrazione bollette PDF via Gemini."
 url: "https://github.com/Smarthome15/Bollette"
@@ -26,5 +26,11 @@ map:
     read_only: false
 options:
   gemini_api_key: ""
+  chiave_accesso: ""
 schema:
   gemini_api_key: "password?"
+  # Chiave di accesso alle API (bonifica accessi 2026-07-26). Opzionale QUI
+  # perché il backend la legge anche da secrets_local.py (pubblicato nell'area
+  # privata); se valorizzata nelle options ha la precedenza. Senza chiave da
+  # nessuna delle due fonti il backend fallisce CHIUSO (503 su tutto tranne health).
+  chiave_accesso: "password?"

@@ -12,6 +12,16 @@
 
 Verifica di sicurezza di Jarvis (bacheca 19/07/2026): HA serve tutta `www/` come `/local/` **senza autenticazione**, e tramite l'add-on NGINX SSL proxy (porta 48443, DuckDNS) `/local` era raggiungibile **da internet** — chiave Gemini, password, `.git/`, bollette PDF e dati erano scaricabili da chiunque. Bonifica eseguita: tutto spostato in `/config/bollette_app` (404 da fuori, come le stanze interne di HA), in `www/Bollette` è rimasto solo `static/`, chiave Gemini rigenerata, password e `/api/login` rimossi, residui (`.git`, `.venv`, `ConsumiCasaPython/`) eliminati. Backup pre-bonifica: `backup_nas/bonifica_20260719/` sul PC. **Regola permanente: in `www/` non va MAI nulla di sensibile.**
 
+## Chiave di accesso alle API (bonifica accessi, 26/07/2026)
+
+Seconda puntata della lezione del 19/07: chiuso `/local`, la stessa merce usciva dalla porta accanto — via `/bollette-api/` chiunque da internet poteva leggere in GET `/api/data` (storico completo) e `/database/pdfs/*` (le bollette vere: intestatario, indirizzo, POD/PDR, IBAN), perché lo snippet NGINX limita alla LAN solo le scritture. Piano concordato in bacheca con Jarvis (Proposta A, 26/07/2026):
+
+- **Il backend esige una chiave** su TUTTE le rotte (`/api/*` e `/database/pdfs/*`), header **`X-Bollette-Key`** — unica eccezione `/api/health` (watchdog), che per questo è muto. Middleware `ChiaveAccessoMiddleware` in `server.py`: confronto in tempo costante, **401** se la chiave manca o è sbagliata (il 404 resta alle rotte inesistenti), **fail-closed 503** se il server non ha una chiave configurata. Mai la chiave attesa nei messaggi o nei log.
+- **Dove vive la chiave** (32 hex da RNG crittografico, MAI in git/bacheca): env `BOLLETTE_ACCESS_KEY` (option `chiave_accesso` dell'add-on, precedenza) → `secrets_local.py` (`CHIAVE_ACCESSO`, arriva sul Pi con la pubblicazione dell'area privata) → lato client, `localStorage` per dispositivo (campo "Chiave di Accesso API" in Impostazioni). Rotazione = nuova chiave in `secrets_local.py`/options + reinserimento sui dispositivi.
+- **I PDF viaggiano via fetch con header** e si mostrano come blob (`openPdfModal`): niente `?k=` negli URL → niente chiave nella history del browser né negli access log NGINX.
+- Il `limit_except GET HEAD` nello snippet NGINX **resta**: difesa in profondità sulle scritture da fuori LAN.
+- I ponti REST di Jarvis (Guardiano Caldaia/Acqua) leggono le letture manuali da `/bollette-api/api/data?user=…&type=manual` con l'header: la chiave sta in `secrets.yaml` sul Pi (pattern `familia_garage_url`).
+
 ## Backend come add-on Home Assistant (dall'11/07/2026)
 
 Il backend gira come **add-on locale HA OS** direttamente sul Raspberry. I file dell'add-on vivono nel repo in `addon/bollette_backend/` (`config.yaml`, `Dockerfile`, `run.sh`, `README.md`) e si consegnano sul Pi con `addon/deploy_addon.ps1` (share `\\192.168.1.15\addons`; lo script copia anche il `requirements.txt` del repo e forza i fine-riga LF di `run.sh`). Installazione dalla UI di HA: *Impostazioni → Componenti aggiuntivi → Store → ⋮ → Verifica aggiornamenti → Bollette Backend → Installa*, poi chiave Gemini nelle **options** e Avvia.
@@ -23,7 +33,7 @@ Principi di funzionamento:
 - **Chiave Gemini nelle options** dell'add-on → env `GEMINI_API_KEY`, già primo nella catena di lettura di `config.py`: sul NAS `secrets_local.py` non serve più.
 - **Vincoli concordati con Jarvis** (bacheca inter-progetto, voce archiviata dell'11/07/2026): `boot: auto` + `watchdog` TCP sulla 8000; access-log disattivato (`--no-access-log`, siamo su microSD; anche `PYTHONDONTWRITEBYTECODE=1` per non sporcare `www` di `__pycache__`); porta 8000 verificata libera sul Pi.
 - **Dati**: unica fonte di verità in `/config/bollette_app/database`, inclusa nei backup nativi HA. ⚠️ La catena backup del Pi (Google Drive Backup settimanale, 2 copie, ~1,5 GB liberi su Drive) è il punto debole segnalato da Jarvis: il PC che scarica dal NAS al login fa da copia di riserva aggiuntiva.
-- **Diagnostica**: `GET http://192.168.1.15:8000/api/health` → `{ok, addon, gemini}` (`gemini: false` = chiave mancante nelle options); log dell'add-on nella sua scheda UI.
+- **Diagnostica**: `GET http://192.168.1.15:8000/api/health` → `{"ok": true}` e nient'altro (dalla bonifica accessi del 26/07/2026 è l'unica rotta senza chiave, quindi è **muta** per scelta: niente flag `addon`/`gemini`); log dell'add-on nella sua scheda UI.
 - ⚠️ **Maiuscole/minuscole**: sul filesystem del Pi la cartella pubblica del frontend è `www/Bollette` (**B maiuscola**), mentre l'area privata è `bollette_app` (tutta minuscola). Da Windows/SMB la differenza non si vede, ma **Linux è case-sensitive**: se si creano riferimenti lato Pi (URL `/local/...`, script), rispettare la grafia esatta.
 
 ## Due sincronizzazioni distinte (da non confondere)
@@ -66,9 +76,9 @@ Da pagina **HTTPS** (DuckDNS) il browser blocca le chiamate a `http://…:8000` 
 
 - **Snippet NGINX** in `addon/nginx/nginx_proxy_default_bollette.conf`: `location /bollette-api/ { proxy_pass http://192.168.1.15:8000/; … }` con `client_max_body_size 64m` (upload PDF) e `proxy_read_timeout 180s` (Gemini). Va copiato in `/share` e serve l'add-on NGINX in modalità `customize` + riavvio dell'add-on NGINX.
 - **Frontend già pronto** (`initSettings`): su pagina HTTPS l'`apiBaseUrl` default è `/bollette-api` (same-origin); un indirizzo `http://…` salvato a mano viene **ignorato su pagina HTTPS** (non potrebbe comunque funzionare). Se la rotta NGINX non esiste ancora, si degrada in sola lettura come sempre.
-- **Sicurezza — deciso l'11/07/2026** (bacheca, proposta Jarvis + approvazione Matteo): **letture da ovunque, scritture solo dalla LAN** — `limit_except GET HEAD { allow 192.168.1.0/24; deny all; }` nello snippet. Motivo: il dominio DuckDNS non è segreto (Certificate Transparency) e l'app non ha auth propria; senza blocco chiunque potrebbe scrivere i JSON o consumare quota Gemini via `/api/parse-pdf`. Da fuori l'app risulta "online" ma i salvataggi ricevono 403 (sola consultazione); il caricamento bollette si fa da casa. Se un giorno servisse scrivere da fuori: basic auth sulle scritture al posto del `deny`. NB collaudo: dal telefono in casa via DuckDNS la scrittura deve passare (hairpin NAT: l'origine vista da NGINX deve restare nella `/24`).
+- **Sicurezza — deciso l'11/07/2026, superato il 26/07/2026**: la regola originale era "letture da ovunque, scritture solo dalla LAN" (`limit_except GET HEAD { allow 192.168.1.0/24; deny all; }` nello snippet). Dalla **bonifica accessi del 26/07/2026** le letture NON sono più libere: ogni rotta esige `X-Bollette-Key` (vedi sezione "Chiave di accesso alle API"). Il `limit_except` resta come difesa in profondità sulle scritture. NB collaudo: dal telefono in casa via DuckDNS la scrittura deve passare (hairpin NAT: l'origine vista da NGINX deve restare nella `/24`).
 
 ## Piste aperte sul deploy
 
 - **Rafforzare la catena di backup** ora che il Pi è l'unica fonte di verità dei dati (segnalazione di Jarvis, 11/07/2026: Google Drive Backup settimanale ×2 copie, ~1,5 GB liberi su Drive; il PC che scarica al login è la riserva attuale).
-- **Scrittura atomica dei JSON** (tmp + rename in `api_save_data`) — concordata con Jarvis, da fare al prossimo giro su `server.py` (poi Pubblica + riavvio add-on).
+- ~~Scrittura atomica dei JSON~~ — **fatta** il 12/07/2026 (`scrivi_json_atomico` in `server.py`, commit `52426cc`).

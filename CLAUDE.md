@@ -49,7 +49,7 @@ Non esiste una suite di test né linter configurati. Per verificare una modifica
 
 Due metà che comunicano solo via API REST JSON — **nessun framework frontend, nessun build step**: il frontend è HTML/CSS/JS statico servito da Starlette.
 
-- **Backend** — `server.py`: app Starlette (ASGI) servita da uvicorn. Espone gli endpoint `/api/*` (incluso `GET /api/health` per watchdog/diagnostica), monta i PDF archiviati su `/database/pdfs`, e monta `static/` come root del sito. CORS è aperto a `*` apposta per permettere a Home Assistant (porta 8123) di chiamare le API. `config.py` definisce utenti/ruoli, percorsi e i percorsi app locale/remota; **la chiave Gemini NON è in `config.py`** (vedi sotto "Chiave Gemini"). Con **`BOLLETTE_ADDON=1`** nell'ambiente (`MODALITA_ADDON` in `config.py`, usato dall'add-on HA in `addon/`) il backend spegne sync/mirroring NAS e pubblicazione: sta già girando sul NAS.
+- **Backend** — `server.py`: app Starlette (ASGI) servita da uvicorn. Espone gli endpoint `/api/*` (incluso `GET /api/health` per il watchdog), monta i PDF archiviati su `/database/pdfs`, e monta `static/` come root del sito. **Chiave di accesso (bonifica accessi 26/07/2026)**: il middleware `ChiaveAccessoMiddleware` esige l'header **`X-Bollette-Key`** su tutte le rotte API e sui PDF — uniche eccezioni `/api/health` (che per questo è **muto**: risponde solo `{"ok": true}`) e il frontend statico. 401 se manca/errata (confronto in tempo costante, mai la chiave nei log), **fail-closed 503** se il server non ha chiave configurata. La chiave (`CHIAVE_ACCESSO` in `config.py`) arriva da env `BOLLETTE_ACCESS_KEY` (options add-on) o da `secrets_local.py`; lato client vive in `localStorage` (campo in Impostazioni) e viaggia via `apiHeaders()` in `app.js` — i PDF si aprono via fetch+blob, mai con la chiave nell'URL. CORS è aperto a `*` apposta per permettere a Home Assistant (porta 8123) di chiamare le API. `config.py` definisce utenti/ruoli, percorsi e i percorsi app locale/remota; **la chiave Gemini NON è in `config.py`** (vedi sotto "Chiave Gemini"). Con **`BOLLETTE_ADDON=1`** nell'ambiente (`MODALITA_ADDON` in `config.py`, usato dall'add-on HA in `addon/`) il backend spegne sync/mirroring NAS e pubblicazione: sta già girando sul NAS.
 - **Frontend** — `static/index.html` (markup + tab), `static/app.js` (tutta la logica, single-file, basata su un oggetto globale `state`), `static/app.css`. Chart.js e Lucide arrivano da CDN.
 
 ### Modello dati (la cosa più importante da capire)
@@ -128,6 +128,14 @@ Fatto e in produzione (committato su `main`, pubblicato sul NAS): scheda Audit f
 ### Già su GitHub `main` (pushato)
 
 Dashboard filtro Anno + fix trend/consumi; import backup sicuro; guardie Letture (commit `5b6f1d1`). Nuova tab **Andamento Prezzi** + estrazione `quota_fissa`/`quota_energia`/`prezzo_unitario_energia` da Gemini, e documentazione `docs/` (commit `f301de2`). **Dati UserA sul NAS** già aggiornati: correzione luce F1 31/12/2024 (333→339, tot 1086); periodi/`consumo_fatturato` popolati su tutte le bollette storiche. Backup in `backup_nas/` (`fix_luce_F1_…`, `fix_audit_periodi_…`).
+
+### Lavori del 26/07/2026 — bonifica accessi API (chiave X-Bollette-Key)
+
+Seconda puntata della lezione del 19/07, emersa dal confronto in bacheca con Jarvis (che ha dato parere favorevole con due condizioni, entrambe recepite): chiuso `/local`, **l'API restava leggibile da internet senza autenticazione** via `/bollette-api/` (lo snippet NGINX limita alla LAN solo le scritture → `/api/data` e i PDF delle bollette erano scaricabili da chiunque). Eseguito col "vai" di Matteo:
+- **Middleware chiave** in `server.py` (vedi Architettura → Backend); `/api/health` asciugato a `{"ok": true}` (condizione Jarvis: l'unica rotta senza chiave dev'essere muta).
+- **Chiave**: 32 hex da RNG crittografico, in `secrets_local.py` (`CHIAVE_ACCESSO`) e opzionalmente nelle options add-on (`chiave_accesso`, precedenza; add-on **v1.0.5**). MAI in git/bacheca/URL; consegna a Jarvis a voce via Matteo.
+- **Frontend**: `apiHeaders()` su tutte le fetch; PDF via fetch+blob (`openPdfModal`), niente `?k=` negli URL (condizione Jarvis: nessuna chiave negli access log NGINX); campo "Chiave di Accesso API" in Impostazioni (localStorage per dispositivo); stato "Chiave di accesso mancante o errata" + avviso in Impostazioni su 401/503.
+- Il `limit_except` NGINX resta (difesa in profondità). I **ponti di Jarvis** (Guardiano Caldaia/Acqua, ciechi dal 19/07) si ripuntano su `/bollette-api/api/data?user=Matteo&utility=gas|acqua&type=manual` con header; la sua sonda verifica che senza chiave la stessa rotta NON dia 200.
 
 ### Lavori del 19/07/2026 — bonifica /local (sicurezza) — FATTA e in produzione
 

@@ -894,6 +894,16 @@
                                 </div>
                             </div>
 
+                            <div class="form-group" id="settings-access-key-group">
+                                <label for="settings-access-key">Chiave di Accesso API</label>
+                                <input type="password" id="settings-access-key" placeholder="chiave condivisa (32 caratteri)" autocomplete="off">
+                                <span class="help-text">Chiave richiesta dal backend per leggere e scrivere i dati (bonifica accessi 26/07/2026). Va inserita una volta per dispositivo e resta solo in questo browser. Senza chiave l'app non carica nulla.</span>
+                                <!-- Avviso mostrato quando il backend risponde 401/503 (chiave mancante o errata) -->
+                                <div id="access-key-alert" class="hidden" style="margin-top:8px; padding:10px 12px; border-radius:var(--radius-md); background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); font-size:0.85rem;">
+                                    🔒 Il backend ha <strong>rifiutato la richiesta</strong>: la chiave di accesso qui sopra manca o è sbagliata. Inseriscila e premi "Salva Configurazione".
+                                </div>
+                            </div>
+
                             <button id="btn-save-settings" class="btn-primary mt-3">
                                 <i data-lucide="check-circle-2"></i>
                                 <span>Salva Configurazione</span>
