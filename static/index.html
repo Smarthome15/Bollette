@@ -886,11 +886,11 @@
 
                             <div class="form-group" id="settings-api-url-group">
                                 <label for="settings-api-url">Indirizzo Server Backend</label>
-                                <input type="url" id="settings-api-url" placeholder="http://192.168.1.165:8000">
-                                <span class="help-text">Indirizzo IP e porta del backend server.py (il PC dove gira, es. <code>http://192.168.1.165:8000</code>). Serve per inserire i PDF e salvare. Lascia vuoto per la sola lettura dei dati quando il PC è spento (serviti da Home Assistant).</span>
+                                <input type="url" id="settings-api-url" placeholder="http://192.168.1.15:8000">
+                                <span class="help-text">Indirizzo del backend (add-on su Home Assistant): <code>http://192.168.1.15:8000</code> — copialo e incollalo qui su ogni dispositivo. Solo se usi il backend di sviluppo sul PC metti il suo IP (es. <code>http://192.168.1.165:8000</code>). Lasciando vuoto l'app prova a rilevarlo da sola.</span>
                                 <!-- Avviso mostrato quando l'app è in sola lettura HA e l'indirizzo è vuoto -->
                                 <div id="api-url-mancante-alert" class="hidden" style="margin-top:8px; padding:10px 12px; border-radius:var(--radius-md); background:rgba(251,146,60,0.12); border:1px solid rgba(251,146,60,0.4); font-size:0.85rem;">
-                                    ⚠️ Sei in modalità <strong>sola lettura (NAS Statico)</strong> perché qui non è impostato l'indirizzo del backend. Inserisci sopra l'indirizzo del PC dove gira <code>server.py</code> (es. <code>http://192.168.1.165:8000</code>) e salva, per poter inserire bollette/letture ed estrarre i PDF.
+                                    ⚠️ Sei in modalità <strong>sola lettura (NAS Statico)</strong> perché qui non è impostato l'indirizzo del backend. Inserisci sopra <code>http://192.168.1.15:8000</code> (l'add-on su Home Assistant) e salva, per poter inserire bollette/letture ed estrarre i PDF.
                                 </div>
                             </div>
 
