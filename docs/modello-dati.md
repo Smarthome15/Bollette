@@ -32,7 +32,9 @@ Campi comuni a tutte le utenze:
 | `note` | Note libere. |
 | `quota_fissa` | (Opzionale) quota fissa del periodo in €. |
 | `quota_energia` | (Opzionale) spesa per la materia/energia consumata in €. |
-| `prezzo_unitario_energia` | (Opzionale) prezzo unitario della quota variabile (€/unità). |
+| `prezzo_unitario_energia` | (Opzionale) prezzo unitario della quota variabile (€/unità): è un **composto** (energia + perdite di rete + dispacciamento), non il prezzo puro. |
+| `prezzo_vendita_energia` | (Opzionale, dal 30/08/2026) prezzo della **sola componente energia/materia prima** (riga "Prezzo vendita energia" del quadro di dettaglio), 5 decimali, media pesata sulle quantità se la riga è mensile. Senza perdite, dispacciamento, trasporto, oneri, imposte. |
+| `canone_rai` | (Opzionale, solo LUCE, dal 30/08/2026) rata del canone TV addebitata in questa bolletta (fuori campo IVA, di norma 9 €/mese gen–ott). `null` = non addebitata. È una tassa già compresa in `fattura`, non un costo dell'energia. |
 
 Campi specifici:
 - **LUCE**: `lettura_f1`, `lettura_f2`, `lettura_f3` (fasce) + `lettura_totale`.

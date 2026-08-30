@@ -946,6 +946,11 @@ async function handlePdfSelected(file) {
             const aiText = document.getElementById("ai-status-text");
             aiBanner.classList.remove("hidden");
             aiText.textContent = "Analisi Gemini AI completata con successo!";
+            // Canone RAI / prezzo vendita energia: se la rilettura letterale della
+            // bolletta (regex nel backend) non coincide con Gemini, lo diciamo.
+            if (Array.isArray(parsed.verifiche_regex) && parsed.verifiche_regex.length) {
+                aiText.textContent += " Corretti dalla bolletta: " + parsed.verifiche_regex.join("; ") + ".";
+            }
         } else {
             // Il backend c'è ma Gemini non è disponibile (503) o altro errore: blocca.
             let msg = "Estrazione automatica non riuscita: impossibile leggere la bolletta.";
@@ -991,6 +996,12 @@ function prefillBillForm(data) {
         const pu = Math.round(parseFloat(data.prezzo_unitario_energia) * 1000) / 1000;
         document.getElementById("bill-prezzo-unitario-energia").value = isFinite(pu) ? pu : "";
     }
+    // Prezzo puro di vendita dell'energia (5 decimali) e canone RAI (solo luce).
+    if (data.prezzo_vendita_energia != null) {
+        const pv = Math.round(parseFloat(data.prezzo_vendita_energia) * 100000) / 100000;
+        document.getElementById("bill-prezzo-vendita-energia").value = isFinite(pv) ? pv : "";
+    }
+    if (data.canone_rai != null) document.getElementById("bill-canone-rai").value = data.canone_rai;
 
     const utility = document.getElementById("bill-utility").value;
     if (utility === "LUCE") {
@@ -1074,6 +1085,8 @@ async function saveNewBill(e) {
     const quotaFissaRaw = document.getElementById("bill-quota-fissa").value;
     const quotaEnergiaRaw = document.getElementById("bill-quota-energia").value;
     const prezzoUnitarioRaw = document.getElementById("bill-prezzo-unitario-energia").value;
+    const prezzoVenditaRaw = document.getElementById("bill-prezzo-vendita-energia").value;
+    const canoneRaiRaw = document.getElementById("bill-canone-rai").value;
 
     // Costruisci record
     const record = {
@@ -1087,7 +1100,11 @@ async function saveNewBill(e) {
         note: notes,
         quota_fissa: quotaFissaRaw !== "" ? parseFloat(quotaFissaRaw) : null,
         quota_energia: quotaEnergiaRaw !== "" ? parseFloat(quotaEnergiaRaw) : null,
-        prezzo_unitario_energia: prezzoUnitarioRaw !== "" ? parseFloat(prezzoUnitarioRaw) : null
+        prezzo_unitario_energia: prezzoUnitarioRaw !== "" ? parseFloat(prezzoUnitarioRaw) : null,
+        // Prezzo della SOLA componente energia (senza perdite/dispacciamento/trasporto/
+        // oneri) e canone RAI addebitato: opzionali, null se non disponibili.
+        prezzo_vendita_energia: prezzoVenditaRaw !== "" ? parseFloat(prezzoVenditaRaw) : null,
+        canone_rai: canoneRaiRaw !== "" ? parseFloat(canoneRaiRaw) : null
     };
 
     if (utility === "LUCE") {
@@ -1104,6 +1121,8 @@ async function saveNewBill(e) {
         record.quota_fissa = null;
         record.quota_energia = null;
         record.prezzo_unitario_energia = null;
+        record.prezzo_vendita_energia = null;
+        record.canone_rai = null;
     } else {
         record.lettura = parseInt(document.getElementById("bill-reading").value) || 0;
     }
@@ -1253,6 +1272,8 @@ function editBill(utility, index) {
     document.getElementById("bill-quota-fissa").value = bill.quota_fissa != null ? bill.quota_fissa : "";
     document.getElementById("bill-quota-energia").value = bill.quota_energia != null ? bill.quota_energia : "";
     document.getElementById("bill-prezzo-unitario-energia").value = bill.prezzo_unitario_energia != null ? bill.prezzo_unitario_energia : "";
+    document.getElementById("bill-prezzo-vendita-energia").value = bill.prezzo_vendita_energia != null ? bill.prezzo_vendita_energia : "";
+    document.getElementById("bill-canone-rai").value = bill.canone_rai != null ? bill.canone_rai : "";
 
     if (utility === "LUCE") {
         document.getElementById("bill-f1").value = bill.lettura_f1 || 0;
@@ -2080,6 +2101,11 @@ async function openPdfModal(url, title, bill) {
         <div class="details-row"><span class="details-label">Quota Fissa</span><span class="details-val">${bill.quota_fissa != null ? "€ " + bill.quota_fissa.toFixed(2) : "n/d"}</span></div>
         <div class="details-row"><span class="details-label">Quota Energia</span><span class="details-val">${bill.quota_energia != null ? "€ " + bill.quota_energia.toFixed(2) : "n/d"}</span></div>
         <div class="details-row"><span class="details-label">Prezzo Unitario</span><span class="details-val">${bill.prezzo_unitario_energia != null ? "€ " + bill.prezzo_unitario_energia.toFixed(3) + "/" + unitForUtility(bill.utility) : "n/d"}</span></div>
+        ${bill.utility !== "RIFIUTI" ? `
+        <div class="details-row"><span class="details-label" title="Prezzo della sola componente energia/materia prima (riga 'Prezzo vendita energia' del quadro di dettaglio): senza perdite di rete, dispacciamento, trasporto, oneri e imposte.">Prezzo solo energia</span><span class="details-val">${bill.prezzo_vendita_energia != null ? "€ " + bill.prezzo_vendita_energia.toFixed(5) + "/" + unitForUtility(bill.utility) : "n/d"}</span></div>
+        <div class="details-row"><span class="details-label" title="Importo totale della bolletta diviso il consumo fatturato: include quote fisse, trasporto, oneri, imposte e canone RAI. Con consumi bassi è dominato dai costi fissi.">Costo medio effettivo</span><span class="details-val">${(bill.fattura != null && bill.consumo_fatturato > 0) ? "€ " + (bill.fattura / bill.consumo_fatturato).toFixed(3) + "/" + unitForUtility(bill.utility) : "n/d"}</span></div>` : ""}
+        ${bill.utility === "LUCE" ? `
+        <div class="details-row"><span class="details-label" title="Rata del canone di abbonamento TV addebitata in questa bolletta (fuori campo IVA). Non è un costo dell'energia.">Canone RAI</span><span class="details-val">${bill.canone_rai != null ? "€ " + bill.canone_rai.toFixed(2) : "non addebitato / n/d"}</span></div>` : ""}
         <div class="details-row" style="flex-direction:column; border:none; gap:6px;">
             <span class="details-label">Note bolletta:</span>
             <p style="background:rgba(255,255,255,0.03); padding:10px; border-radius:var(--radius-sm); font-size:0.85rem; border:1px solid var(--border-glass);">${bill.note || "Nessuna nota aggiuntiva."}</p>

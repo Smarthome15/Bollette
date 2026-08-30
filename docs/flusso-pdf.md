@@ -19,7 +19,11 @@ Se Gemini non è disponibile (chiave assente o irraggiungibile), `/api/parse-pdf
 
 ## Campi estratti dal prompt
 
-Comuni a tutte le utenze: `data`, `periodo_inizio`, `periodo_fine`, `consumo_fatturato`, `fattura`, e la scomposizione costi `quota_fissa`, `quota_energia`, `prezzo_unitario_energia` (usata dalla tab Andamento Prezzi). Specifici: `lettura_f1/f2/f3` + `lettura_totale` per la LUCE; `lettura` per GAS/ACQUA. Un dato non trovato viene messo a `null`.
+Comuni a tutte le utenze: `data`, `periodo_inizio`, `periodo_fine`, `consumo_fatturato`, `fattura`, la scomposizione costi `quota_fissa`, `quota_energia`, `prezzo_unitario_energia` (usata dalla tab Andamento Prezzi) e `prezzo_vendita_energia` (prezzo della sola componente energia). Specifici: `lettura_f1/f2/f3` + `lettura_totale` + `canone_rai` per la LUCE; `lettura` per GAS/ACQUA. Un dato non trovato viene messo a `null`.
+
+## Rilettura regex per la LUCE (canone RAI e prezzo vendita energia)
+
+Unica eccezione alla regola "solo Gemini": `estrai_campi_luce_regex(text)` in `server.py` rilegge `canone_rai` e `prezzo_vendita_energia` direttamente dal testo, perché nelle bollette Iren hanno un'etichetta stabile ("Canone di abbonamento alla televisione … 9,00", "Prezzo (di) vendita (di) energia … Euro/kWh PREZZO QUANTITÀ TOTALE"; testata sulle 28 bollette luce reali il 30/08/2026, 28/28). In `api_parse_pdf`, dopo Gemini: i `null` vengono completati dalla regex; se i due valori divergono vince la regex (è la riga letterale) e la divergenza va in `verifiche_regex`, che il frontend appende al banner "Analisi Gemini AI completata". Non è un fallback dell'estrazione intera: senza Gemini l'endpoint resta 503. Lo storico luce è stato popolato con la stessa funzione (script una tantum via `/api/save`, backup in `backup_nas/fix_canone_rai_20260830_*`).
 
 ## Chiave Gemini (fuori dal codice versionato)
 

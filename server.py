@@ -492,6 +492,39 @@ def get_json_filepath(username: str, utility: str, is_manual: bool):
     return os.path.join(DB_DIR_LOCALE, filename)
 
 # Chiamata a Gemini per il parsing avanzato
+def _num_it(s: str) -> float:
+    """'1.234,56' → 1234.56 (formato numerico italiano delle bollette)."""
+    return float(s.replace(".", "").replace(",", "."))
+
+
+def estrai_campi_luce_regex(text: str) -> dict:
+    """Estrazione DETERMINISTICA (senza Gemini) di due voci della bolletta LUCE
+    Iren che nel quadro di dettaglio hanno un'etichetta stabile:
+      - canone_rai: riga "Canone di abbonamento alla televisione ... 9,00 €"
+      - prezzo_vendita_energia: riga "Prezzo (di) vendita (di) energia ... Euro/kWh
+        PREZZO QUANTITÀ TOTALE", media pesata sulle quantità se compare più volte.
+    Non è un fallback generico dell'estrazione (quello è stato tolto apposta):
+    copre solo queste due voci, testate sulle 28 bollette luce reali (30/08/2026),
+    e serve a completare/verificare ciò che Gemini restituisce. Chiavi assenti se
+    la voce non è stata trovata (mai zeri finti)."""
+    out = {}
+    m = re.search(r"Canone di abbonamento alla televisione[^\n]*?(\d+(?:\.\d{3})*,\d{2})", text)
+    if m:
+        out["canone_rai"] = _num_it(m.group(1))
+    tot_q = 0.0
+    tot_e = 0.0
+    for m in re.finditer(
+        r"Prezzo (?:di )?vendita (?:di )?energia[^\n]*?Euro/kWh\s+(\d+,\d+)\s+(\d+(?:,\d+)?)\s+(-?\d+,\d{2})",
+        text,
+    ):
+        prezzo, q = _num_it(m.group(1)), _num_it(m.group(2))
+        tot_q += q
+        tot_e += q * prezzo
+    if tot_q > 0:
+        out["prezzo_vendita_energia"] = round(tot_e / tot_q, 5)
+    return out
+
+
 def parse_pdf_gemini(text: str, utility_type: str):
     if not API_KEY_GEMINI:
         return None
@@ -512,9 +545,11 @@ def parse_pdf_gemini(text: str, utility_type: str):
         - quota_fissa: la somma delle quote FISSE del periodo in Euro (numero decimale: es. quota fissa di vendita + trasporto/gestione contatore, indipendenti dal consumo). null se non scorporabile.
         - quota_energia: l'importo in Euro della parte VARIABILE legata al consumo (la riga complessiva tipo "Quota per consumi X unità × PREZZO = IMPORTO"), esclusa la quota fissa. NON usare le sotto-voci "di cui ..." (es. "di cui spesa per vendita"): serve l'importo complessivo della quota consumi. null se non indicata.
         - prezzo_unitario_energia: il prezzo unitario COMPLESSIVO della stessa riga "Quota per consumi" (EUR/kWh per LUCE, EUR/Smc per GAS, EUR/m³ per ACQUA), numero decimale con più cifre. VINCOLO DI COERENZA: deve valere quota_energia ≈ consumo_fatturato × prezzo_unitario_energia (stessa riga della bolletta, mai mescolare una sotto-voce col totale). null se non indicato.
+        - prezzo_vendita_energia: il prezzo unitario della SOLA componente energia/materia prima, cioè la riga del quadro di dettaglio chiamata "Prezzo vendita energia (PUN + SPREAD)" / "Prezzo di vendita di energia elettrica" (LUCE, EUR/kWh) o "Prezzo materia prima gas" / "Componente CMEM" (GAS, EUR/Smc): SENZA perdite di rete, dispacciamento, trasporto, oneri di sistema e imposte. Numero decimale con 5 cifre. Se la riga compare più volte (un mese per riga) fai la media PESATA sulle quantità (somma dei totali ÷ somma delle quantità). null se non indicato.
         """
         if utility_type.upper() == "LUCE":
             prompt += """
+            - canone_rai: l'importo in Euro addebitato in questa bolletta per il "Canone di abbonamento alla televisione" (canone RAI, voce fuori campo IVA in fondo al riepilogo, di norma 9,00 al mese). null se in questa bolletta non è addebitato.
             - lettura_f1: valore lettura contatore fascia F1 (intero, null se assente).
             - lettura_f2: valore lettura contatore fascia F2 (intero, null se assente).
             - lettura_f3: valore lettura contatore fascia F3 (intero, null se assente).
@@ -717,6 +752,24 @@ async def api_parse_pdf(request: Request):
                 }, status_code=503)
 
             parsed_data["parsed_via"] = "gemini"
+
+            # LUCE: canone RAI e prezzo puro di vendita dell'energia hanno etichette
+            # stabili nel PDF → li rileggiamo anche con le regex e completiamo ciò
+            # che Gemini ha lasciato a null. Se entrambi hanno un valore e divergono,
+            # vince la regex (è la riga letterale della bolletta) e lo segnaliamo
+            # in `verifiche_regex` così il frontend può mostrarlo nel banner.
+            if utility.upper() == "LUCE":
+                regex_vals = estrai_campi_luce_regex(text_full)
+                divergenze = []
+                for chiave, val_regex in regex_vals.items():
+                    val_gemini = parsed_data.get(chiave)
+                    if val_gemini is None:
+                        parsed_data[chiave] = val_regex
+                    elif abs(float(val_gemini) - val_regex) > (0.005 if chiave == "canone_rai" else 0.0005):
+                        divergenze.append(f"{chiave}: Gemini {val_gemini} ≠ bolletta {val_regex}")
+                        parsed_data[chiave] = val_regex
+                if divergenze:
+                    parsed_data["verifiche_regex"] = divergenze
             return JSONResponse(parsed_data)
             
         finally:
