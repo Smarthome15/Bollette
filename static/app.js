@@ -1595,8 +1595,13 @@ function renderDashboard() {
             //  1) consumo_fatturato dichiarato in bolletta → etichetta "(Fatturato)" (è davvero il fatturato);
             //  2) altrimenti differenza tra letture progressive → etichetta "(stima da letture)";
             //  3) altrimenti il valore progressivo del contatore → "(Totale contatore)".
+            // Consumo fatturato TOTALE dell'anno (somma dei consumo_fatturato delle bollette
+            // dell'anno selezionato); mostrato come "ultima / anno", in parallelo alla spesa.
+            const consAnno = list.reduce((s, x) =>
+                s + ((typeof x.consumo_fatturato === "number" && isFinite(x.consumo_fatturato)) ? x.consumo_fatturato : 0), 0);
+            const consAnnoTxt = consAnno > 0 ? ` / ${Math.round(consAnno * 100) / 100}` : "";
             if (typeof last.consumo_fatturato === "number" && isFinite(last.consumo_fatturato)) {
-                document.getElementById(subId).textContent = `${last.consumo_fatturato} ${unit} (Fatturato)`;
+                document.getElementById(subId).textContent = `${last.consumo_fatturato}${consAnnoTxt} ${unit} (Fatturato)`;
             } else {
                 let consumed = 0;
                 const idx = bills[utility].indexOf(last);
