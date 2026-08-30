@@ -1552,15 +1552,6 @@ function renderDashboard() {
     document.getElementById("kpi-spesa-totale-title").textContent = `Spesa Totale ${selectedYear}`;
     document.getElementById("kpi-spesa-totale").textContent = `€ ${totalSpentSelected.toFixed(2)}`;
 
-    // Ripartizione della spesa dell'anno per utenza (chip colorati sotto il totale).
-    const ripEl = document.getElementById("kpi-spesa-ripartizione");
-    if (ripEl) {
-        const voci = [["LUCE", "Luce", "luce"], ["GAS", "Gas", "gas"], ["ACQUA", "Acqua", "acqua"], ["RIFIUTI", "TARI", "rifiuti"]];
-        ripEl.innerHTML = totalSpentSelected > 0
-            ? voci.map(([k, label, cls]) =>
-                `<span class="kpi-chip kpi-chip-${cls}"><i></i>${label} € ${spesaPerUtenza[k].toFixed(2)}</span>`).join("")
-            : "";
-    }
 
     const trendEl = document.getElementById("kpi-spesa-trend");
     if (cmpPrev > 0) {
@@ -1594,7 +1585,10 @@ function renderDashboard() {
 
         if (list.length > 0) {
             const last = list[list.length - 1];
-            document.getElementById(kpiId).textContent = `€ ${last.fattura.toFixed(2)}`;
+            // "ultima bolletta / totale dell'anno" (stesso anno di competenza del KPI).
+            const totAnno = spesaPerUtenza[utility] || 0;
+            document.getElementById(kpiId).innerHTML =
+                `€ ${last.fattura.toFixed(2)}<span class="kpi-value-total" title="Totale speso nel ${selectedYear} per questa utenza"> / ${totAnno.toFixed(2)}</span>`;
             const cons = last.lettura_totale !== undefined ? last.lettura_totale : (last.lettura || 0);
 
             // Sotto-etichetta del consumo dell'ultima bolletta. Priorità:

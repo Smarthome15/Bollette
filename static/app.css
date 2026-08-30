@@ -365,32 +365,13 @@ body {
     color: var(--text-muted);
 }
 
-/* Ripartizione per utenza sotto la Spesa Totale (chip con pallino colorato) */
-.kpi-breakdown {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 10px;
-    margin-top: 6px;
-    min-width: 0;
-}
-.kpi-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 0.72rem;
+/* Nelle card utenza: "€ ultima bolletta / totale anno" — il totale più piccolo e tenue */
+.kpi-value-total {
+    font-size: 0.95rem;
+    font-weight: 600;
     color: var(--text-muted);
     white-space: nowrap;
 }
-.kpi-chip i {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    display: inline-block;
-}
-.kpi-chip-luce i { background: var(--color-luce); }
-.kpi-chip-gas i { background: var(--color-gas); }
-.kpi-chip-acqua i { background: var(--color-acqua); }
-.kpi-chip-rifiuti i { background: var(--color-rifiuti); }
 
 /* Colori specifici delle schede */
 .kpi-card.total .kpi-icon-wrapper { background-color: var(--color-accent-glow); color: var(--color-accent); }
