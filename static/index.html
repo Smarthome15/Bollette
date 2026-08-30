@@ -738,8 +738,8 @@
                         <p class="help-text mt-2" id="prezzi-fisso-note"></p>
                     </div>
                     <div class="glass-card">
-                        <h3>Prezzo unitario (€/unità)</h3>
-                        <p class="subtitle">Il prezzo della sola materia consumata. Con offerte indicizzate un po' di su-e-giù col mercato è normale: conta il confronto con un anno fa.</p>
+                        <h3>Prezzo unitario e prezzo solo energia (€/unità)</h3>
+                        <p class="subtitle">Linea piena: prezzo unitario composto della quota consumi (energia + perdite + dispacciamento). Linea tratteggiata verde: prezzo della SOLA energia/materia prima, l'unica parte che dipende dall'offerta. Se le due linee si allontanano, salgono perdite e oneri, non il mercato. Conta il confronto con un anno fa.</p>
                         <div class="chart-wrapper mt-3" style="height: 280px;">
                             <canvas id="chart-prezzi"></canvas>
                         </div>
@@ -768,6 +768,8 @@
                                     <th>Periodo <span class="th-help" title="Periodo di fatturazione della bolletta (la data di emissione è nel tooltip della riga).">ⓘ</span></th>
                                     <th>Prezzo unitario <span class="th-help" title="Prezzo della sola materia consumata (€/unità), dalla riga 'Quota per consumi' della bolletta PDF.">ⓘ</span></th>
                                     <th>Var. prezzo <span class="th-help" title="Variazione % del prezzo unitario: vs bolletta precedente e vs pari periodo di un anno prima.">ⓘ</span></th>
+                                    <th>Solo energia <span class="th-help" title="Prezzo della SOLA componente energia/materia prima (riga 'Prezzo vendita energia' / 'Materia prima gas' del quadro di dettaglio): è la parte che dipende dall'offerta (PUN/PSV + spread). 📺 = in quella bolletta è addebitato il canone RAI (importo nel tooltip).">ⓘ</span></th>
+                                    <th>Var. energia <span class="th-help" title="Variazione % del prezzo puro dell'energia: vs bolletta precedente e vs pari periodo di un anno prima.">ⓘ</span></th>
                                     <th>Quota fissa <span class="th-help" title="Quota fissa normalizzata al giorno (€/giorno): si paga anche a consumo zero.">ⓘ</span></th>
                                     <th>Var. fissa <span class="th-help" title="Variazione % della quota fissa giornaliera: vs precedente e vs anno prima.">ⓘ</span></th>
                                     <th>Bolletta tipo <span class="th-help" title="Costo mensile simulato a consumo costante (consumo tipo): confrontabile tra stagioni.">ⓘ</span></th>
@@ -821,14 +823,14 @@
 
                 <!-- Tabella di confronto -->
                 <div class="glass-card mt-4">
-                    <h3>Consumo: Periodo A vs Periodo B</h3>
-                    <p class="subtitle">Consumo di ogni utenza nei due periodi, calcolato dalle autoletture (differenza tra la lettura di fine periodo e quella precedente all'inizio).</p>
+                    <h3>Consumo e prezzo: Periodo A vs Periodo B</h3>
+                    <p class="subtitle">Consumo di ogni utenza nei due periodi, calcolato dalle autoletture (differenza tra la lettura di fine periodo e quella precedente all'inizio). Per luce e gas anche il prezzo puro dell'energia (dalle bollette con competenza nel periodo, media pesata sul consumo): così distingui se è cambiato il consumo, l'offerta, o entrambi.</p>
                     <div class="table-responsive mt-3">
                         <table class="data-table">
                             <thead>
                                 <tr>
                                     <th>Utenza <span class="th-help" title="Tipo di fornitura: Luce, Gas o Acqua.">ⓘ</span></th>
-                                    <th>Metrica <span class="th-help" title="Consumo del periodo dalle autoletture.">ⓘ</span></th>
+                                    <th>Metrica <span class="th-help" title="Consumo del periodo dalle autoletture; per luce e gas anche il prezzo puro dell'energia dalle bollette del periodo.">ⓘ</span></th>
                                     <th>Periodo A <span class="th-help" title="Consumo nel primo periodo selezionato.">ⓘ</span></th>
                                     <th>Periodo B <span class="th-help" title="Consumo nel secondo periodo selezionato.">ⓘ</span></th>
                                     <th>Variazione <span class="th-help" title="Variazione % del consumo nel periodo B rispetto al periodo A.">ⓘ</span></th>
