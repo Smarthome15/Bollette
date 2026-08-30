@@ -833,10 +833,13 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
     border-radius: var(--radius-md);
     background-color: rgba(0, 0, 0, 0.15);
     display: flex;
-    align-items: center;
-    justify-content: center;
+    flex-direction: column;   /* viewer sopra, toolbar sotto: mai affiancati */
+    align-items: stretch;
+    justify-content: flex-start;
     min-height: 450px;
     position: relative;
+    padding: 8px;
+    min-width: 0;
     overflow: hidden;
 }
 
@@ -895,6 +898,7 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
 .pdf-download[hidden] { display: none; }
 .pdf-viewer {
     width: 100%;
+    flex: 1 1 auto;
     height: 600px;
     overflow: auto;
     text-align: center;
