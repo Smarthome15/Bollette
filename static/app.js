@@ -1529,6 +1529,7 @@ function renderDashboard() {
     let totalSpentSelected = 0;     // intero anno selezionato (per il valore KPI)
     let cmpSelected = 0;            // anno selezionato, fino a meseLimite
     let cmpPrev = 0;               // anno precedente, fino a meseLimite
+    const spesaPerUtenza = { LUCE: 0, GAS: 0, ACQUA: 0, RIFIUTI: 0 }; // ripartizione del totale
 
     Object.keys(bills).forEach(ut => {
         bills[ut].forEach(b => {
@@ -1540,6 +1541,7 @@ function renderDashboard() {
             const bMonth = parseInt(mk.slice(5, 7), 10);
             if (bYear === selectedYear) {
                 totalSpentSelected += b.fattura;
+                if (ut in spesaPerUtenza) spesaPerUtenza[ut] += b.fattura;
                 if (bMonth <= meseLimite) cmpSelected += b.fattura;
             } else if (bYear === selectedYear - 1) {
                 if (bMonth <= meseLimite) cmpPrev += b.fattura;
@@ -1549,6 +1551,16 @@ function renderDashboard() {
 
     document.getElementById("kpi-spesa-totale-title").textContent = `Spesa Totale ${selectedYear}`;
     document.getElementById("kpi-spesa-totale").textContent = `€ ${totalSpentSelected.toFixed(2)}`;
+
+    // Ripartizione della spesa dell'anno per utenza (chip colorati sotto il totale).
+    const ripEl = document.getElementById("kpi-spesa-ripartizione");
+    if (ripEl) {
+        const voci = [["LUCE", "Luce", "luce"], ["GAS", "Gas", "gas"], ["ACQUA", "Acqua", "acqua"], ["RIFIUTI", "TARI", "rifiuti"]];
+        ripEl.innerHTML = totalSpentSelected > 0
+            ? voci.map(([k, label, cls]) =>
+                `<span class="kpi-chip kpi-chip-${cls}"><i></i>${label} € ${spesaPerUtenza[k].toFixed(2)}</span>`).join("")
+            : "";
+    }
 
     const trendEl = document.getElementById("kpi-spesa-trend");
     if (cmpPrev > 0) {
