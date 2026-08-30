@@ -497,26 +497,34 @@ def _num_it(s: str) -> float:
     return float(s.replace(".", "").replace(",", "."))
 
 
-def estrai_campi_luce_regex(text: str) -> dict:
-    """Estrazione DETERMINISTICA (senza Gemini) di due voci della bolletta LUCE
-    Iren che nel quadro di dettaglio hanno un'etichetta stabile:
-      - canone_rai: riga "Canone di abbonamento alla televisione ... 9,00 €"
-      - prezzo_vendita_energia: riga "Prezzo (di) vendita (di) energia ... Euro/kWh
-        PREZZO QUANTITÀ TOTALE", media pesata sulle quantità se compare più volte.
-    Non è un fallback generico dell'estrazione (quello è stato tolto apposta):
-    copre solo queste due voci, testate sulle 28 bollette luce reali (30/08/2026),
-    e serve a completare/verificare ciò che Gemini restituisce. Chiavi assenti se
-    la voce non è stata trovata (mai zeri finti)."""
+def estrai_campi_regex(text: str, utility_type: str) -> dict:
+    """Estrazione DETERMINISTICA (senza Gemini) delle voci della bolletta Iren che
+    nel quadro di dettaglio hanno un'etichetta stabile:
+      - LUCE  canone_rai: riga "Canone di abbonamento alla televisione ... 9,00 €"
+      - LUCE  prezzo_vendita_energia: righe "Prezzo (di) vendita (di) energia ...
+              Euro/kWh PREZZO QUANTITÀ TOTALE"
+      - GAS   prezzo_vendita_energia: righe "Materia prima gas" (fino al 2025) o
+              "Prezzo di vendita di gas naturale" (dal 2026) ... Euro/smc PREZZO
+              QUANTITÀ TOTALE (le righe a quantità 0 con IVA 22% pesano zero).
+    Il prezzo è la media PESATA sulle quantità quando la riga è ripetuta (un mese
+    per riga). Non è un fallback generico dell'estrazione (quello è stato tolto
+    apposta): copre solo queste voci, testate sulle 28 bollette luce + 18 gas
+    reali (30/08/2026), e serve a completare/verificare ciò che Gemini
+    restituisce. Chiavi assenti se la voce non è stata trovata (mai zeri finti)."""
     out = {}
-    m = re.search(r"Canone di abbonamento alla televisione[^\n]*?(\d+(?:\.\d{3})*,\d{2})", text)
-    if m:
-        out["canone_rai"] = _num_it(m.group(1))
+    ut = (utility_type or "").upper()
+    if ut == "LUCE":
+        m = re.search(r"Canone di abbonamento alla televisione[^\n]*?(\d+(?:\.\d{3})*,\d{2})", text)
+        if m:
+            out["canone_rai"] = _num_it(m.group(1))
+        pattern = r"Prezzo (?:di )?vendita (?:di )?energia[^\n]*?Euro/kWh\s+(\d+,\d+)\s+(\d+(?:,\d+)?)\s+(-?\d+,\d{2})"
+    elif ut == "GAS":
+        pattern = r"(?:Materia prima gas|Prezzo (?:di )?vendita (?:di )?gas naturale)[^\n]*?Euro/smc\s+(\d+,\d+)\s+(\d+(?:,\d+)?)\s+(-?\d+,\d{2})"
+    else:
+        return out
     tot_q = 0.0
     tot_e = 0.0
-    for m in re.finditer(
-        r"Prezzo (?:di )?vendita (?:di )?energia[^\n]*?Euro/kWh\s+(\d+,\d+)\s+(\d+(?:,\d+)?)\s+(-?\d+,\d{2})",
-        text,
-    ):
+    for m in re.finditer(pattern, text, re.IGNORECASE):
         prezzo, q = _num_it(m.group(1)), _num_it(m.group(2))
         tot_q += q
         tot_e += q * prezzo
@@ -545,7 +553,7 @@ def parse_pdf_gemini(text: str, utility_type: str):
         - quota_fissa: la somma delle quote FISSE del periodo in Euro (numero decimale: es. quota fissa di vendita + trasporto/gestione contatore, indipendenti dal consumo). null se non scorporabile.
         - quota_energia: l'importo in Euro della parte VARIABILE legata al consumo (la riga complessiva tipo "Quota per consumi X unità × PREZZO = IMPORTO"), esclusa la quota fissa. NON usare le sotto-voci "di cui ..." (es. "di cui spesa per vendita"): serve l'importo complessivo della quota consumi. null se non indicata.
         - prezzo_unitario_energia: il prezzo unitario COMPLESSIVO della stessa riga "Quota per consumi" (EUR/kWh per LUCE, EUR/Smc per GAS, EUR/m³ per ACQUA), numero decimale con più cifre. VINCOLO DI COERENZA: deve valere quota_energia ≈ consumo_fatturato × prezzo_unitario_energia (stessa riga della bolletta, mai mescolare una sotto-voce col totale). null se non indicato.
-        - prezzo_vendita_energia: il prezzo unitario della SOLA componente energia/materia prima, cioè la riga del quadro di dettaglio chiamata "Prezzo vendita energia (PUN + SPREAD)" / "Prezzo di vendita di energia elettrica" (LUCE, EUR/kWh) o "Prezzo materia prima gas" / "Componente CMEM" (GAS, EUR/Smc): SENZA perdite di rete, dispacciamento, trasporto, oneri di sistema e imposte. Numero decimale con 5 cifre. Se la riga compare più volte (un mese per riga) fai la media PESATA sulle quantità (somma dei totali ÷ somma delle quantità). null se non indicato.
+        - prezzo_vendita_energia: il prezzo unitario della SOLA componente energia/materia prima, cioè la riga del quadro di dettaglio chiamata "Prezzo vendita energia (PUN + SPREAD)" / "Prezzo di vendita di energia elettrica" (LUCE, EUR/kWh) o "Materia prima gas" / "Prezzo di vendita di gas naturale" (GAS, EUR/Smc; ignora le righe a quantità 0): SENZA perdite di rete, dispacciamento, trasporto, oneri di sistema e imposte. Numero decimale con 5 cifre. Se la riga compare più volte (un mese per riga) fai la media PESATA sulle quantità (somma dei totali ÷ somma delle quantità). null se non indicato.
         """
         if utility_type.upper() == "LUCE":
             prompt += """
@@ -753,13 +761,13 @@ async def api_parse_pdf(request: Request):
 
             parsed_data["parsed_via"] = "gemini"
 
-            # LUCE: canone RAI e prezzo puro di vendita dell'energia hanno etichette
+            # LUCE/GAS: canone RAI e prezzo puro della materia prima hanno etichette
             # stabili nel PDF → li rileggiamo anche con le regex e completiamo ciò
             # che Gemini ha lasciato a null. Se entrambi hanno un valore e divergono,
             # vince la regex (è la riga letterale della bolletta) e lo segnaliamo
             # in `verifiche_regex` così il frontend può mostrarlo nel banner.
-            if utility.upper() == "LUCE":
-                regex_vals = estrai_campi_luce_regex(text_full)
+            if utility.upper() in ("LUCE", "GAS"):
+                regex_vals = estrai_campi_regex(text_full, utility)
                 divergenze = []
                 for chiave, val_regex in regex_vals.items():
                     val_gemini = parsed_data.get(chiave)
