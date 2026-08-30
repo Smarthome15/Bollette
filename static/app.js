@@ -397,7 +397,12 @@ function initEventListeners() {
     // Modal close
     document.getElementById("btn-close-modal").addEventListener("click", () => {
         document.getElementById("modal-dettaglio-bolletta").classList.add("hidden");
-        document.getElementById("modal-pdf-frame").src = "";
+        chiudiPdfViewer("modal");
+    });
+
+    // Zoom dei visualizzatori PDF (modal e anteprima form): pulsanti data-pdf-zoom.
+    document.querySelectorAll("[data-pdf-zoom]").forEach(btn => {
+        btn.addEventListener("click", () => zoomPdf(btn.getAttribute("data-pdf-viewer"), parseInt(btn.getAttribute("data-pdf-zoom"), 10)));
     });
 
     // Utenza select in Verifica
@@ -898,7 +903,6 @@ function updateBackendStatusBadge(status) {
 async function handlePdfSelected(file) {
     const uploadingBadge = document.getElementById("uploading-badge");
     const previewBox = document.getElementById("pdf-preview-box");
-    const previewFrame = document.getElementById("pdf-preview-frame");
 
     // In modalità locale non c'è backend: l'estrazione automatica è impossibile.
     if (state.storageMode === "local") {
@@ -938,8 +942,8 @@ async function handlePdfSelected(file) {
         if (response.ok) {
             const parsed = await response.json();
             // Successo: ora mostriamo l'anteprima e pre-compiliamo il form.
-            previewFrame.src = URL.createObjectURL(file);
             previewBox.classList.remove("hidden");
+            file.arrayBuffer().then(buf => mostraPdf("preview", buf));
             prefillBillForm(parsed);
 
             const aiBanner = document.getElementById("ai-status-banner");
@@ -1020,7 +1024,7 @@ function removePdfFile() {
     state.tempPdfFile = null;
     document.getElementById("form-bill-pdf-path").value = "";
     document.getElementById("pdf-preview-box").classList.add("hidden");
-    document.getElementById("pdf-preview-frame").src = "";
+    chiudiPdfViewer("preview");
     document.getElementById("pdf-drag-drop").classList.remove("hidden");
     const aiBanner = document.getElementById("ai-status-banner");
     aiBanner.classList.add("hidden");
@@ -2058,26 +2062,135 @@ function renderBillsTable() {
     lucide.createIcons();
 }
 
+// --- VISUALIZZATORE PDF (PDF.js su canvas) ---
+// Niente <iframe>/<object>: Chrome per Android e la WebView dell'app companion
+// non hanno un viewer PDF integrato e trasformano il frame in un download
+// bloccato ("contenuto bloccato"). PDF.js disegna le pagine su canvas, quindi
+// funziona ovunque. Tecnica ripresa da F.A.M.ilia (apriAnteprima/renderPdfInModal).
+// PDF.js è caricato dal CDN solo alla prima apertura di un PDF (lazy).
+let pdfJsPromise = null;
+function caricaPdfJs() {
+    if (window.pdfjsLib) return Promise.resolve();
+    if (pdfJsPromise) return pdfJsPromise;
+    pdfJsPromise = new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
+        s.onload = () => {
+            // Worker cross-origin non consentito: PDF.js ricade da solo sul "fake
+            // worker" nel main thread. Basta indicare comunque il sorgente.
+            pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+            resolve();
+        };
+        s.onerror = () => { pdfJsPromise = null; reject(new Error("CDN PDF.js non raggiungibile")); };
+        document.head.appendChild(s);
+    });
+    return pdfJsPromise;
+}
+
+// Due visualizzatori indipendenti: "modal" (dettaglio bolletta) e "preview"
+// (anteprima del PDF appena scelto nel form). Ognuno con documento, zoom e un
+// token anti-race (se parte un nuovo render, quello vecchio si ferma).
+const pdfViewers = {
+    modal:   { doc: null, zoom: 1, token: 0, box: "modal-pdf-viewer",   toolbar: "modal-pdf-toolbar",   label: "modal-pdf-zoom-label" },
+    preview: { doc: null, zoom: 1, token: 0, box: "preview-pdf-viewer", toolbar: "preview-pdf-toolbar", label: "preview-pdf-zoom-label" }
+};
+
+function pdfViewerMessaggio(v, html) {
+    const box = document.getElementById(v.box);
+    if (box) box.innerHTML = `<div class="pdf-viewer-msg">${html}</div>`;
+}
+
+function chiudiPdfViewer(nome) {
+    const v = pdfViewers[nome];
+    v.token++;
+    if (v.doc) { try { v.doc.destroy(); } catch (e) { /* già chiuso */ } }
+    v.doc = null; v.zoom = 1;
+    const box = document.getElementById(v.box);
+    if (box) box.innerHTML = "";
+    const tb = document.getElementById(v.toolbar);
+    if (tb) tb.hidden = true;
+}
+
+// Carica un ArrayBuffer PDF nel visualizzatore indicato e disegna le pagine.
+async function mostraPdf(nome, arrayBuffer) {
+    const v = pdfViewers[nome];
+    chiudiPdfViewer(nome);
+    pdfViewerMessaggio(v, "Caricamento anteprima…");
+    try {
+        await caricaPdfJs();
+        v.doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        v.zoom = 1;
+        await renderPaginePdf(nome);
+        const tb = document.getElementById(v.toolbar);
+        if (tb) tb.hidden = false;
+        lucide.createIcons();
+    } catch (e) {
+        console.error("Anteprima PDF non disponibile:", e);
+        pdfViewerMessaggio(v, `Anteprima non disponibile qui (${e.message}).<br>Usa <b>Scarica</b> e apri il file con l'app dei PDF.`);
+    }
+}
+
+async function renderPaginePdf(nome) {
+    const v = pdfViewers[nome];
+    const box = document.getElementById(v.box);
+    if (!box || !v.doc) return;
+    const token = ++v.token;
+    const label = document.getElementById(v.label);
+    if (label) label.textContent = `${Math.round(v.zoom * 100)}%`;
+    box.innerHTML = "";
+    const base = Math.max(box.clientWidth - 8, 280);
+    const maxPagine = Math.min(v.doc.numPages, 20);
+    for (let n = 1; n <= maxPagine; n++) {
+        if (token !== v.token || !box.isConnected) return;
+        const pagina = await v.doc.getPage(n);
+        const cssW = Math.round(base * v.zoom);
+        // Backing store limitato a 2400px: nitido ma senza esplodere in memoria sul telefono.
+        const backingW = Math.min(cssW * Math.min(window.devicePixelRatio || 1, 2), 2400);
+        const vp = pagina.getViewport({ scale: backingW / pagina.getViewport({ scale: 1 }).width });
+        const canvas = document.createElement("canvas");
+        canvas.width = vp.width; canvas.height = vp.height;
+        canvas.style.cssText = `width:${cssW}px;max-width:none;display:block;margin:0 auto 10px;border-radius:6px;background:#fff`;
+        box.appendChild(canvas);
+        await pagina.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+    }
+    if (v.doc.numPages > maxPagine) {
+        box.insertAdjacentHTML("beforeend", `<p class="help-text">…altre ${v.doc.numPages - maxPagine} pagine: usa Scarica per il file completo.</p>`);
+    }
+}
+
+function zoomPdf(nome, direzione) {
+    const v = pdfViewers[nome];
+    if (!v.doc) return;
+    if (direzione === 0) v.zoom = 1;
+    else v.zoom = Math.min(4, Math.max(0.5, v.zoom * (direzione > 0 ? 1.25 : 0.8)));
+    renderPaginePdf(nome);
+}
+
 async function openPdfModal(url, title, bill) {
     document.getElementById("modal-title").textContent = title;
 
     // I PDF sono dietro la chiave di accesso: si scaricano via fetch con header
-    // X-Bollette-Key e si mostrano come blob. Così la chiave non compare mai
-    // negli URL (niente ?k= nella history del browser né negli access log NGINX
-    // — condizione concordata con Jarvis in bacheca, 2026-07-26).
-    const frame = document.getElementById("modal-pdf-frame");
-    frame.src = "about:blank";
+    // X-Bollette-Key. Così la chiave non compare mai negli URL (niente ?k= nella
+    // history del browser né negli access log NGINX — condizione concordata con
+    // Jarvis in bacheca, 2026-07-26). I byte vanno a PDF.js (anteprima) e, come
+    // blob URL, al pulsante Scarica (clic diretto dell'utente: mai bloccato).
+    const download = document.getElementById("modal-pdf-download");
+    download.hidden = true;
+    chiudiPdfViewer("modal");
+    document.getElementById("modal-dettaglio-bolletta").classList.remove("hidden");
     try {
         const res = await fetch(url, { headers: apiHeaders() });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
+        const buf = await res.arrayBuffer();
         if (state.pdfBlobUrl) URL.revokeObjectURL(state.pdfBlobUrl);
-        state.pdfBlobUrl = URL.createObjectURL(blob);
-        frame.src = state.pdfBlobUrl;
+        state.pdfBlobUrl = URL.createObjectURL(new Blob([buf], { type: "application/pdf" }));
+        download.href = state.pdfBlobUrl;
+        download.setAttribute("download", (bill && bill.pdf_path) ? bill.pdf_path.split("/").pop() : "bolletta.pdf");
+        download.hidden = false;
+        mostraPdf("modal", buf);
     } catch (err) {
         console.error("Impossibile scaricare il PDF:", err);
-        frame.src = "about:blank";
-        alert("Impossibile aprire il PDF: verifica che il backend sia attivo e che la chiave di accesso in Impostazioni sia corretta.");
+        pdfViewerMessaggio(pdfViewers.modal, "Impossibile scaricare il PDF: verifica che il backend sia attivo e che la chiave di accesso in Impostazioni sia corretta.");
     }
 
     // Popola i dati dettaglio sulla destra
