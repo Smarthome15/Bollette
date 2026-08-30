@@ -2707,51 +2707,50 @@ function buildPrezziVerdetto(rows, soglia, consumoTipo, unit) {
         }
     }
 
-    // Prezzo puro (sola energia/materia prima): è la parte che dipende dall'offerta.
-    // Se disponibile sulla stessa bolletta, spiega il movimento del composto:
-    // puro che sale quanto il composto → mercato; puro fermo → perdite/dispacciamento.
+    // PREZZI — guida il prezzo PURO (sola energia: è l'offerta). Il composto
+    // (energia + perdite + dispacciamento) compare solo quando si allontana dal
+    // puro: quel pezzo di rincaro viene da perdite/oneri, non dall'operatore.
     const rpu = ultimo("puro");
-    const spiegaConPuro = (rifComposto, tipo) => {
-        if (!rpu || !rp || rpu !== rp) return "";
-        const vp = rpu.variazioni.puro[tipo];
-        if (vp == null) return "";
-        if (Math.abs(vp) >= soglia && Math.sign(vp) === Math.sign(rifComposto)) {
-            return ` Il prezzo puro dell'energia fa ${pct(vp)}: è il mercato/l'offerta.`;
-        }
-        return ` Il prezzo puro dell'energia fa ${pct(vp)}: il movimento viene da perdite/dispacciamento, non dall'offerta.`;
-    };
-
     const rp = ultimo("prezzo");
-    if (rp) {
-        const v = rp.variazioni.prezzo;
-        if (v.anno != null && Math.abs(v.anno) >= soglia) {
-            if (v.anno > 0) {
-                danger = true;
-                messaggi.push({ icona: "⚠️", testo: `Prezzo unitario ${pct(v.anno)} rispetto a un anno fa (ora ${rp.prezzo.toFixed(3)} €/${unit}): non è stagionalità — vale la pena confrontare altre offerte.${spiegaConPuro(v.anno, "anno")}` });
-            } else {
-                messaggi.push({ icona: "✅", testo: `Prezzo unitario ${pct(v.anno)} rispetto a un anno fa (ora ${rp.prezzo.toFixed(3)} €/${unit}).${spiegaConPuro(v.anno, "anno")}` });
-            }
-        } else if (v.prec != null && Math.abs(v.prec) >= soglia) {
-            warn = true;
-            const nota = v.anno != null
-                ? ` (rispetto a un anno fa ${pct(v.anno)}: probabile stagionalità o mercato)`
-                : " (nessuna bolletta di un anno fa per distinguere la stagionalità)";
-            messaggi.push({ icona: "🔎", testo: `Prezzo unitario ${pct(v.prec)} rispetto alla bolletta precedente (ora ${rp.prezzo.toFixed(3)} €/${unit})${nota}.${spiegaConPuro(v.prec, "prec")}` });
-        }
-    }
-
-    // Prezzo puro da solo (anche quando il composto manca o è fermo): la sua
-    // variazione vs anno prima è il segnale più pulito di rincaro dell'offerta.
+    let puroSegnalato = false;
     if (rpu) {
         const v = rpu.variazioni.puro;
-        const giaSpiegato = (rp && rpu === rp && ((rp.variazioni.prezzo.anno != null && Math.abs(rp.variazioni.prezzo.anno) >= soglia) || (rp.variazioni.prezzo.prec != null && Math.abs(rp.variazioni.prezzo.prec) >= soglia)));
-        if (!giaSpiegato) {
+        if (v.anno != null && Math.abs(v.anno) >= soglia) {
+            puroSegnalato = true;
+            if (v.anno > 0) {
+                danger = true;
+                messaggi.push({ icona: "⚠️", testo: `Prezzo dell'energia ${pct(v.anno)} rispetto a un anno fa (ora ${rpu.puro.toFixed(4)} €/${unit}): non è stagionalità, è l'offerta — vale la pena confrontare altri operatori.` });
+            } else {
+                messaggi.push({ icona: "✅", testo: `Prezzo dell'energia ${pct(v.anno)} rispetto a un anno fa (ora ${rpu.puro.toFixed(4)} €/${unit}).` });
+            }
+        } else if (v.prec != null && Math.abs(v.prec) >= soglia) {
+            puroSegnalato = true;
+            warn = true;
+            const nota = v.anno != null
+                ? ` (rispetto a un anno fa ${pct(v.anno)}: probabile stagionalità del mercato)`
+                : " (nessuna bolletta di un anno fa per distinguere la stagionalità)";
+            messaggi.push({ icona: "🔎", testo: `Prezzo dell'energia ${pct(v.prec)} rispetto alla bolletta precedente (ora ${rpu.puro.toFixed(4)} €/${unit})${nota}.` });
+        }
+    }
+    if (rp) {
+        const v = rp.variazioni.prezzo;
+        const vp = (rpu && rpu === rp) ? rpu.variazioni.puro : null;
+        // Divergenza composto − puro: se il composto sale più del puro oltre soglia, sono perdite/oneri.
+        const diverge = (tipo) => (v[tipo] != null && vp && vp[tipo] != null) ? v[tipo] - vp[tipo] : null;
+        const dAnno = diverge("anno"), dPrec = diverge("prec");
+        if (dAnno != null && dAnno >= soglia) {
+            warn = true;
+            messaggi.push({ icona: "🧾", testo: `Perdite di rete/dispacciamento in aumento: il prezzo composto fa ${pct(v.anno)} vs anno fa contro ${pct(vp.anno)} della sola energia (ora ${rp.prezzo.toFixed(3)} €/${unit} tutto compreso). Non dipende dall'offerta.` });
+        } else if (dPrec != null && dPrec >= soglia) {
+            messaggi.push({ icona: "🧾", testo: `Perdite/dispacciamento su rispetto alla bolletta precedente: composto ${pct(v.prec)} contro ${pct(vp.prec)} della sola energia.` });
+        } else if (!rpu && !puroSegnalato) {
+            // Nessun prezzo puro disponibile: ripiego sul composto (bollette senza il dato).
             if (v.anno != null && Math.abs(v.anno) >= soglia) {
                 if (v.anno > 0) danger = true;
-                messaggi.push({ icona: v.anno > 0 ? "⚠️" : "✅", testo: `Prezzo puro dell'energia ${pct(v.anno)} rispetto a un anno fa (ora ${rpu.puro.toFixed(4)} €/${unit}): è la componente che dipende dall'offerta${v.anno > 0 ? " — vale la pena confrontare altre offerte" : ""}.` });
+                messaggi.push({ icona: v.anno > 0 ? "⚠️" : "✅", testo: `Prezzo unitario ${pct(v.anno)} rispetto a un anno fa (ora ${rp.prezzo.toFixed(3)} €/${unit}).` });
             } else if (v.prec != null && Math.abs(v.prec) >= soglia) {
                 warn = true;
-                messaggi.push({ icona: "🔎", testo: `Prezzo puro dell'energia ${pct(v.prec)} rispetto alla bolletta precedente (ora ${rpu.puro.toFixed(4)} €/${unit})${v.anno != null ? ` (vs anno fa ${pct(v.anno)})` : ""}.` });
+                messaggi.push({ icona: "🔎", testo: `Prezzo unitario ${pct(v.prec)} rispetto alla bolletta precedente (ora ${rp.prezzo.toFixed(3)} €/${unit}).` });
             }
         }
     }
@@ -2835,7 +2834,7 @@ function renderPrezziTable(rows, escluse, unit, soglia) {
     tbody.innerHTML = "";
 
     if (!rows.length) {
-        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color:var(--text-secondary); padding:20px;">Nessuna bolletta con dati di dettaglio costi per questa utenza. Carica una bolletta PDF: quota fissa e prezzo unitario verranno estratti automaticamente e compariranno qui.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--text-secondary); padding:20px;">Nessuna bolletta con dati di dettaglio costi per questa utenza. Carica una bolletta PDF: quota fissa e prezzo unitario verranno estratti automaticamente e compariranno qui.</td></tr>`;
     }
 
     const fmtVar = (v) => {
@@ -2850,10 +2849,11 @@ function renderPrezziTable(rows, escluse, unit, soglia) {
         const vq = r.variazioni.qfGiorno, vp = r.variazioni.prezzo, vu = r.variazioni.puro, vi = r.variazioni.indice;
         const note = [];
         if (vq.prec != null && Math.abs(vq.prec) >= soglia) note.push(vq.prec > 0 ? "⚠️ Quota fissa su" : "Quota fissa giù");
-        if (vp.anno != null && Math.abs(vp.anno) >= soglia) note.push(vp.anno > 0 ? "⚠️ Prezzo su vs anno" : "Prezzo giù vs anno");
-        else if (vp.prec != null && Math.abs(vp.prec) >= soglia) note.push(vp.prec > 0 ? "Prezzo su (stagione?)" : "Prezzo giù (stagione?)");
-        if (vu.anno != null && Math.abs(vu.anno) >= soglia) note.push(vu.anno > 0 ? "⚠️ Energia pura su vs anno" : "Energia pura giù vs anno");
-        else if (vu.prec != null && Math.abs(vu.prec) >= soglia) note.push(vu.prec > 0 ? "Energia pura su (mercato?)" : "Energia pura giù (mercato?)");
+        if (vu.anno != null && Math.abs(vu.anno) >= soglia) note.push(vu.anno > 0 ? "⚠️ Energia su vs anno" : "Energia giù vs anno");
+        else if (vu.prec != null && Math.abs(vu.prec) >= soglia) note.push(vu.prec > 0 ? "Energia su (stagione?)" : "Energia giù (stagione?)");
+        else if (r.puro == null && vp.anno != null && Math.abs(vp.anno) >= soglia) note.push(vp.anno > 0 ? "⚠️ Prezzo su vs anno" : "Prezzo giù vs anno");
+        // Composto che si allontana dal puro = perdite/oneri in aumento (non è l'offerta).
+        if (vp.anno != null && vu.anno != null && vp.anno - vu.anno >= soglia) note.push("🧾 Perdite/oneri su");
         if (vi.anno != null && Math.abs(vi.anno) >= soglia) note.push(vi.anno > 0 ? "⚠️ Bolletta tipo su" : "Bolletta tipo giù");
         const grave = note.some(n => n.startsWith("⚠️"));
         const segnalazione = note.length
@@ -2862,9 +2862,7 @@ function renderPrezziTable(rows, escluse, unit, soglia) {
 
         const tr = document.createElement("tr");
         tr.innerHTML = `
-            <td style="font-size:0.85rem;" title="Bolletta del ${formatDate(r.bill.data)}">${formattaPeriodo(r.bill)}</td>
-            <td class="font-medium">${r.prezzo != null ? "€ " + r.prezzo.toFixed(3) + "/" + unit : "—"}</td>
-            ${cellaVar(vp)}
+            <td style="font-size:0.85rem;" title="Bolletta del ${formatDate(r.bill.data)}${r.prezzo != null ? " · prezzo unitario composto € " + r.prezzo.toFixed(3) + "/" + unit + (vp.anno != null ? " (" + (vp.anno > 0 ? "+" : "") + Math.round(vp.anno * 100) + "% vs anno)" : "") : ""}">${formattaPeriodo(r.bill)}</td>
             <td class="font-medium" title="${r.canone != null ? "Canone RAI in bolletta: € " + r.canone.toFixed(2) : ""}">${r.puro != null ? "€ " + r.puro.toFixed(4) + "/" + unit : "—"}${r.canone != null ? ' <span class="text-secondary" style="font-size:0.75rem;">📺</span>' : ""}</td>
             ${cellaVar(vu)}
             <td class="font-medium">${r.qfGiorno != null ? "€ " + r.qfGiorno.toFixed(3) + "/giorno" : "—"}</td>
