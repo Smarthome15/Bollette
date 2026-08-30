@@ -332,13 +332,13 @@
                                 <span class="badge badge-info hidden" id="uploading-badge">Caricamento e analisi in corso...</span>
                             </div>
                             <div class="pdf-preview-container hidden" id="pdf-preview-box">
+                                <div class="pdf-viewer pdf-viewer-preview" id="preview-pdf-viewer"></div>
                                 <div class="pdf-toolbar" id="preview-pdf-toolbar" hidden>
                                     <button type="button" class="btn-icon-only" data-pdf-zoom="-1" data-pdf-viewer="preview" title="Riduci"><i data-lucide="zoom-out"></i></button>
                                     <span class="pdf-zoom-label" id="preview-pdf-zoom-label">100%</span>
                                     <button type="button" class="btn-icon-only" data-pdf-zoom="1" data-pdf-viewer="preview" title="Ingrandisci"><i data-lucide="zoom-in"></i></button>
                                     <button type="button" class="btn-icon-only" data-pdf-zoom="0" data-pdf-viewer="preview" title="Adatta alla larghezza"><i data-lucide="maximize"></i></button>
                                 </div>
-                                <div class="pdf-viewer pdf-viewer-preview" id="preview-pdf-viewer"></div>
                                 <button class="btn-secondary btn-sm" id="btn-rimuovi-pdf">Rimuovi PDF</button>
                             </div>
                         </div>
@@ -1046,6 +1046,7 @@
                 <div class="pdf-section">
                     <!-- Anteprima PDF via PDF.js su canvas (niente iframe: bloccato nella
                          WebView dell'app companion e in Lovelace). Tecnica presa da F.A.M.ilia. -->
+                    <div class="pdf-viewer" id="modal-pdf-viewer"></div>
                     <div class="pdf-toolbar" id="modal-pdf-toolbar" hidden>
                         <button type="button" class="btn-icon-only" data-pdf-zoom="-1" data-pdf-viewer="modal" title="Riduci"><i data-lucide="zoom-out"></i></button>
                         <span class="pdf-zoom-label" id="modal-pdf-zoom-label">100%</span>
@@ -1053,7 +1054,6 @@
                         <button type="button" class="btn-icon-only" data-pdf-zoom="0" data-pdf-viewer="modal" title="Adatta alla larghezza"><i data-lucide="maximize"></i></button>
                         <a class="btn-secondary btn-sm pdf-download" id="modal-pdf-download" href="#" download hidden title="Scarica il PDF e aprilo con l'app dei PDF"><i data-lucide="download"></i> Scarica</a>
                     </div>
-                    <div class="pdf-viewer" id="modal-pdf-viewer"></div>
                 </div>
                 <!-- Destra: Dati -->
                 <div class="form-section">

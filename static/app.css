@@ -878,10 +878,12 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    margin-bottom: 8px;
+    gap: 10px;
+    margin-top: 10px;
     flex-wrap: wrap;
 }
+.pdf-toolbar .btn-icon-only { width: 44px; height: 44px; }
+.pdf-toolbar .btn-icon-only svg { width: 22px; height: 22px; }
 .pdf-toolbar[hidden] { display: none; }
 .pdf-zoom-label {
     min-width: 52px;
@@ -1164,8 +1166,10 @@ code, .help-text {
     .pdf-section {
         min-height: 300px;
     }
+    /* Telefono: il PDF prende quasi tutto lo schermo, i pulsanti stanno sotto. */
     .pdf-viewer {
-        height: 420px;
+        height: 65vh;
+        padding: 4px;
     }
 }
 
