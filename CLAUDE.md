@@ -112,6 +112,7 @@ Il backend specchia ogni salvataggio sul NAS Home Assistant via SMB (`DB_DIR_REM
 - I nomi file/JSON usano sempre il `db_prefix` anonimo, **mai lo username in chiaro**. Per i path usare gli helper `get_filename_only()` / `get_json_filepath()`, non costruirli a mano.
 - **Non versionati** (vedi `.gitignore`): `database/` (dati + `database/pdfs/`, ricreata all'avvio), `secrets_local.py` (chiave Gemini), `backup_nas/` (backup del NAS pre-pubblicazione).
 - Aggiungere un utente = voce in `UTENTI_CONFIG` (`config.py`, backend) **e** in `PROFILI_UTENTE` (`app.js`, login lato client), con lo stesso `db_prefix`.
+- **Pull giornaliera (regola di Matteo, 30/08/2026)**: se dall'ultimo fetch è passato più di un giorno, la sessione parte con `git pull --ff-only` automatico — hook SessionStart in `.claude/settings.json` (versionato: vale su tutte le macchine). Se l'hook segnala una pull fallita, risolverla PRIMA di toccare il codice. Si lavora da più macchine (PC fisso + portatile): senza pull si rischia di modificare codice vecchio.
 - **Bacheca inter-progetto** (`C:\Dev\Jarvis\collab\bacheca.md`, regole ed elenco partecipanti in testa al file — oggi: Jarvis, Bollette, F.A.M.ilia): quando una decisione o un piano di questo progetto tocca il Raspberry/Home Assistant o interessa gli altri progetti (es. il backend come add-on HA), va scritta una voce lì; a inizio lavoro controllare se ci sono risposte (`STATO: RISPOSTA`) alle voci di Bollette. Comando rapido: `/bacheca`. Mai committare nel repo Jarvis (lì lavora un'altra sessione).
 
 ## Infrastruttura reale (rete)

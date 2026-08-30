@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" 2>/dev/null; now=$(date +%s); ts=$(stat -c %Y .git/FETCH_HEAD 2>/dev/null || echo 0); if [ $((now-ts)) -gt 86400 ]; then echo \"[regola pull giornaliera] Ultimo fetch oltre 24 ore fa: eseguo git pull --ff-only...\"; git pull --ff-only 2>&1 || echo \"[regola pull giornaliera] ATTENZIONE: pull non riuscita (offline, modifiche locali in conflitto o storia divergente) - da risolvere a mano prima di lavorare.\"; fi",
+            "timeout": 90,
+            "statusMessage": "Regola pull giornaliera: controllo se il repo è da aggiornare..."
+          }
+        ]
+      }
+    ]
+  }
+}
