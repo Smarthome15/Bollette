@@ -112,8 +112,44 @@ function apiHeaders(extra) {
     return h;
 }
 
+// Chiave di accesso dal FRAMMENTO dell'URL (#k=<32 hex>) — accordo in bacheca
+// con Jarvis e F.A.M.ilia, vai di Matteo del 2026-09-03. La card iframe della
+// dashboard HA «gestione» apre l'app con `...index.html?v=3#k=<K>`: così la
+// chiave arriva da sola su ogni dispositivo e su ENTRAMBE le origini con cui
+// l'app companion apre HA (URL interno sul Wi-Fi di casa, DuckDNS fuori) —
+// il localStorage è per origine, e senza questo Matteo doveva reinserirla
+// «dopo un po'». Il frammento non arriva mai al server né nel Referer: niente
+// chiave nei log NGINX/HA (la query string `?k=` resta vietata). Regole:
+// hash > localStorage (la card è la fonte di verità: alla rotazione della K
+// va cambiata nello stesso giro), guardia «32 hex minuscoli E diversa da
+// quella salvata», chiave malformata → ignorata con avviso senza toccare
+// quella salvata, replaceState SUBITO dopo la lettura (prima di ogni
+// reload). Senza frammento nessun effetto: resta il campo in Impostazioni.
+function leggiChiaveDaFrammento() {
+    const hash = window.location.hash || "";
+    if (!hash.startsWith("#k=") && !hash.includes("&k=")) return;
+    const k = (new URLSearchParams(hash.slice(1)).get("k") || "").trim();
+    // Pulizia immediata del frammento (nessuna voce di history: replaceState).
+    try {
+        history.replaceState(null, "", window.location.pathname + window.location.search);
+    } catch (e) { /* contesto senza history (es. file://): la chiave è comunque letta */ }
+
+    if (!/^[0-9a-f]{32}$/.test(k)) {
+        console.warn("Chiave nel frammento dell'URL ignorata: formato non valido (attesi 32 hex minuscoli).");
+        setTimeout(() => alert("La chiave di accesso indicata nell'indirizzo della card non è valida " +
+            "(attesi 32 caratteri esadecimali): resta in uso quella salvata su questo dispositivo."), 0);
+        return;
+    }
+    const salvata = localStorage.getItem("consumicasa_chiave_accesso") || "";
+    if (k !== salvata) {
+        localStorage.setItem("consumicasa_chiave_accesso", k);
+        console.info("Chiave di accesso aggiornata dal frammento dell'URL della card.");
+    }
+}
+
 // Configura l'indirizzo delle API in base all'ambiente
 function initSettings() {
+    leggiChiaveDaFrammento(); // prima della lettura del localStorage: hash > localStorage
     const savedApiUrl = localStorage.getItem("consumicasa_api_url");
     const savedStorageMode = localStorage.getItem("consumicasa_storage_mode");
     state.accessKey = localStorage.getItem("consumicasa_chiave_accesso") || "";
