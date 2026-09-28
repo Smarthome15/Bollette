@@ -946,13 +946,17 @@ async function handlePdfSelected(file) {
         return;
     }
 
-    // Verifica che il file sia DAVVERO leggibile prima di spedirlo: un PDF scelto
-    // da un provider cloud (es. Google Drive non scaricato sul telefono) arriva
-    // alla webview della companion come segnaposto illeggibile e la richiesta
-    // muore prima di partire — dando la colpa, ingiustamente, al server.
+    // Copia IN MEMORIA del PDF prima di spedirlo. Un file scelto da un provider
+    // cloud (es. Google Drive) arriva alla webview come riferimento al provider:
+    // leggerne i primi byte può riuscire, ma l'invio vero (fetch + FormData) lo
+    // rilegge dal provider e sul telefono si interrompe → "Failed to fetch", con
+    // la colpa data al server. Leggendolo tutto SUBITO e spedendo la copia,
+    // parse-pdf e poi upload-pdf (saveNewBill) non dipendono più dal provider.
     try {
         if (!file || !file.size) throw new Error("file vuoto");
-        await file.slice(0, 16).arrayBuffer();
+        const buf = await file.arrayBuffer();
+        if (!buf.byteLength) throw new Error("file vuoto");
+        file = new File([buf], file.name || "bolletta.pdf", { type: "application/pdf" });
     } catch (e) {
         blockPdfInsertion("Il PDF non è leggibile dal dispositivo (es. file su Google Drive non ancora scaricato). Scaricalo sul telefono, poi riprova da lì.");
         return;
@@ -991,6 +995,11 @@ async function handlePdfSelected(file) {
             if (Array.isArray(parsed.verifiche_regex) && parsed.verifiche_regex.length) {
                 aiText.textContent += " Corretti dalla bolletta: " + parsed.verifiche_regex.join("; ") + ".";
             }
+        } else if (response.status === 403) {
+            // Il 403 lo dà solo il proxy NGINX (limit_except dello snippet): le
+            // scritture, parse-pdf compreso, passano solo dalla rete di casa. Il
+            // backend non risponde mai 403 (usa 401 per la chiave).
+            blockPdfInsertion("Da fuori casa il caricamento delle bollette è bloccato per sicurezza: riprova quando sei collegato al Wi-Fi di casa.");
         } else {
             // Il backend c'è ma Gemini non è disponibile (503) o altro errore: blocca.
             let msg = "Estrazione automatica non riuscita: impossibile leggere la bolletta.";
@@ -1042,6 +1051,10 @@ function prefillBillForm(data) {
         document.getElementById("bill-prezzo-vendita-energia").value = isFinite(pv) ? pv : "";
     }
     if (data.canone_rai != null) document.getElementById("bill-canone-rai").value = data.canone_rai;
+    // Lettura fatturata (ultima riga del quadro letture, gas/acqua): data e tipo
+    // letti dal backend; servono alla Verifica Anomalie per il saldo.
+    if (data.data_lettura) document.getElementById("bill-data-lettura").value = data.data_lettura;
+    if (data.tipo_lettura) document.getElementById("bill-type").value = data.tipo_lettura;
 
     const utility = document.getElementById("bill-utility").value;
     if (utility === "LUCE") {
@@ -1137,6 +1150,9 @@ async function saveNewBill(e) {
         fattura: amount,
         pdf_path: pdfPath,
         tipo_lettura: billType, // Stimata, Rilevata, Mista
+        // Data della lettura fatturata (ultima riga del quadro letture): con
+        // `lettura` dà il saldo in Verifica Anomalie. null se non indicata.
+        data_lettura: document.getElementById("bill-data-lettura").value || null,
         note: notes,
         quota_fissa: quotaFissaRaw !== "" ? parseFloat(quotaFissaRaw) : null,
         quota_energia: quotaEnergiaRaw !== "" ? parseFloat(quotaEnergiaRaw) : null,
@@ -1157,6 +1173,7 @@ async function saveNewBill(e) {
         record.lettura_totale = parseInt(document.getElementById("bill-luce-totale").value) || (f1 + f2 + f3);
     } else if (utility === "RIFIUTI") {
         // RIFIUTI (TARI): nessuna lettura né consumo/quote. Solo periodo + importo.
+        record.data_lettura = null;
         record.consumo_fatturato = null;
         record.quota_fissa = null;
         record.quota_energia = null;
@@ -1308,6 +1325,7 @@ function editBill(utility, index) {
     document.getElementById("bill-consumo-fatturato").value = bill.consumo_fatturato != null ? bill.consumo_fatturato : "";
     document.getElementById("bill-amount").value = bill.fattura != null ? bill.fattura : "";
     document.getElementById("bill-type").value = bill.tipo_lettura || "rilevata";
+    document.getElementById("bill-data-lettura").value = bill.data_lettura || "";
     document.getElementById("bill-notes").value = bill.note || "";
     document.getElementById("bill-quota-fissa").value = bill.quota_fissa != null ? bill.quota_fissa : "";
     document.getElementById("bill-quota-energia").value = bill.quota_energia != null ? bill.quota_energia : "";
@@ -1635,13 +1653,20 @@ function renderDashboard() {
             //  1) consumo_fatturato dichiarato in bolletta → etichetta "(Fatturato)" (è davvero il fatturato);
             //  2) altrimenti differenza tra letture progressive → etichetta "(stima da letture)";
             //  3) altrimenti il valore progressivo del contatore → "(Totale contatore)".
-            // Consumo fatturato TOTALE dell'anno (somma dei consumo_fatturato delle bollette
-            // dell'anno selezionato); mostrato come "ultima / anno", in parallelo alla spesa.
-            const consAnno = list.reduce((s, x) =>
-                s + ((typeof x.consumo_fatturato === "number" && isFinite(x.consumo_fatturato)) ? x.consumo_fatturato : 0), 0);
+            // Consumo fatturato TOTALE dell'anno (somma sulle bollette dell'anno
+            // selezionato); mostrato come "ultima / anno", in parallelo alla spesa.
+            // Gas/acqua: il NETTO dalle letture fatturate (il consumo stampato è lordo
+            // e sommarlo conterebbe due volte gli acconti rifatturati).
+            const consumoBolletta = x => {
+                const netto = nettoFatturato(x, bills[utility]);
+                if (netto != null) return netto;
+                return (typeof x.consumo_fatturato === "number" && isFinite(x.consumo_fatturato)) ? x.consumo_fatturato : null;
+            };
+            const consAnno = list.reduce((s, x) => s + (consumoBolletta(x) || 0), 0);
             const consAnnoTxt = consAnno > 0 ? ` / ${Math.round(consAnno * 100) / 100}` : "";
-            if (typeof last.consumo_fatturato === "number" && isFinite(last.consumo_fatturato)) {
-                document.getElementById(subId).textContent = `${last.consumo_fatturato}${consAnnoTxt} ${unit} (Fatturato)`;
+            const consUltima = consumoBolletta(last);
+            if (consUltima != null) {
+                document.getElementById(subId).textContent = `${consUltima}${consAnnoTxt} ${unit} (Fatturato)`;
             } else {
                 let consumed = 0;
                 const idx = bills[utility].indexOf(last);
@@ -2245,8 +2270,12 @@ async function openPdfModal(url, title, bill) {
     const periodoText = (bill.periodo_inizio || bill.periodo_fine)
         ? `${bill.periodo_inizio ? formatDate(bill.periodo_inizio) : "?"} → ${bill.periodo_fine ? formatDate(bill.periodo_fine) : "?"}`
         : "Non indicato";
+    const netto = nettoFatturato(bill, state.data.bills[bill.utility]);
     const consumoFattText = (bill.consumo_fatturato != null)
-        ? `${bill.consumo_fatturato} ${unitForUtility(bill.utility)}`
+        ? `${bill.consumo_fatturato} ${unitForUtility(bill.utility)}` +
+          ((netto != null && Math.abs(netto - bill.consumo_fatturato) >= 0.5)
+              ? ` <span class="text-secondary" title="Il consumo stampato è lordo: include m³/Smc già fatturati nelle bollette precedenti (acconti restituiti o ricalcolati). Netto = lettura fatturata meno quella della bolletta precedente.">(netto ${netto})</span>`
+              : "")
         : "Non indicato";
 
     detailsBox.innerHTML = `
@@ -2255,7 +2284,7 @@ async function openPdfModal(url, title, bill) {
         <div class="details-row"><span class="details-label">Periodo Fatturazione</span><span class="details-val">${periodoText}</span></div>
         <div class="details-row"><span class="details-label">Consumo Fatturato</span><span class="details-val">${consumoFattText}</span></div>
         <div class="details-row"><span class="details-label">Importo Fatturato</span><span class="details-val text-primary" style="font-size:1.15rem; font-weight:700;">€ ${(bill.fattura || 0).toFixed(2)}</span></div>
-        <div class="details-row"><span class="details-label">Lettura Totale</span><span class="details-val">${reading}</span></div>
+        <div class="details-row"><span class="details-label" title="Lettura del contatore fatturata dalla bolletta (ultima riga del quadro letture), reale o stimata.">Lettura Totale</span><span class="details-val">${reading}${bill.data_lettura ? ` <span class="text-secondary">(${bill.tipo_lettura || "?"} del ${formatDate(bill.data_lettura)})</span>` : ""}</span></div>
         ${specificContent}
         <div class="details-row"><span class="details-label">Tipo Rilevazione</span><span class="details-val text-capitalize">${bill.tipo_lettura || 'Non specificata'}</span></div>
         <div class="details-row"><span class="details-label">Quota Fissa</span><span class="details-val">${bill.quota_fissa != null ? "€ " + bill.quota_fissa.toFixed(2) : "n/d"}</span></div>
@@ -2378,7 +2407,7 @@ function renderAuditTab() {
     let countNa = 0; // non verificabili
 
     if (bills.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--text-secondary); padding:20px;">Nessuna bolletta registrata per questa utenza. Carica un PDF bolletta per confrontarla.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:var(--text-secondary); padding:20px;">Nessuna bolletta registrata per questa utenza. Carica un PDF bolletta per confrontarla.</td></tr>`;
         updateAuditCounters(0, 0, 0, 0);
         renderAuditTimelineChart(utility, []);
         return;
@@ -2386,65 +2415,36 @@ function renderAuditTab() {
 
     const unit = unitForUtility(utility);
     const reportEntries = [];
+    // Gas/acqua con la data della lettura fatturata → saldo; il resto (luce,
+    // record senza data_lettura) → confronto per mese sulle autoletture.
+    const saldi = auditSaldoBollette(bills, readings);
 
     bills.forEach(bill => {
-        const audit = auditConsumoForBill(bill, readings);
-
         // Periodo (mese leggibile) e tipo lettura.
         const periodoText = (bill.periodo_inizio || bill.periodo_fine)
             ? `${bill.periodo_inizio ? formatDate(bill.periodo_inizio) : "?"} → ${bill.periodo_fine ? formatDate(bill.periodo_fine) : "?"}`
             : "Non indicato";
         const tipoLettura = bill.tipo_lettura || "rilevata";
 
-        let fatturatoText = audit.consumoFatturato != null ? `${audit.consumoFatturato} ${unit}` : "-";
-        let rilevatoText = "-";
-        let diffDisplay = "-";
-        let statusBadge;
-        let actionText;
-        let statusClass;
+        const saldo = saldi.get(bill);
+        const voce = saldo
+            ? voceAuditSaldo(saldo, unit)
+            : voceAuditMensile(bill, auditConsumoForBill(bill, readings), unit);
+        if (voce.statusClass === "success") countOk++;
+        else if (voce.statusClass === "danger") countOver++;
+        else if (voce.statusClass === "warning") countUnder++;
+        else countNa++;
 
-        if (!audit.verifiable) {
-            rilevatoText = "n/d";
-            statusBadge = `<span class="badge badge-secondary">Non verificabile</span>`;
-            actionText = audit.reason || "Dati insufficienti per la verifica.";
-            statusClass = "secondary";
-            countNa++;
-        } else {
-            rilevatoText = `${audit.consumoRilevato} ${unit}`;
-            const pct = Math.round(audit.deltaPct * 100);
-            const segno = audit.delta > 0 ? "+" : "";
-            diffDisplay = `${segno}${audit.delta} ${unit} (${segno}${pct}%)`;
-
-            if (Math.abs(audit.deltaPct) <= SOGLIA_AUDIT) {
-                statusBadge = `<span class="badge badge-success">Allineata</span>`;
-                actionText = "Il consumo fatturato corrisponde a quello rilevato. Nessuna azione necessaria.";
-                statusClass = "success";
-                countOk++;
-            } else if (audit.delta > 0) {
-                statusBadge = `<span class="badge badge-danger">Sovrafatturata</span>`;
-                actionText = `Fatturati +${audit.delta} ${unit} (${pct}%) oltre il consumo reale rilevato. Verifica la bolletta e invia un'autolettura.`;
-                statusClass = "danger";
-                countOver++;
-            } else {
-                statusBadge = `<span class="badge badge-warning">Conguaglio atteso</span>`;
-                actionText = `Consumo reale superiore di ${Math.abs(audit.delta)} ${unit} (${Math.abs(pct)}%) rispetto al fatturato. Possibile conguaglio futuro.`;
-                statusClass = "warning";
-                countUnder++;
-            }
-        }
-
-        reportEntries.push({
+        reportEntries.push(Object.assign({
             date: bill.data,
             periodoText,
-            fatturatoText,
-            rilevatoText,
-            diffDisplay,
             tipoLettura,
-            statusBadge,
-            actionText,
-            statusClass
-        });
+            dataLetturaText: saldo ? formatDate(saldo.dataLettura) : ""
+        }, voce));
     });
+
+    // Grafico in ordine cronologico (le bollette sono già in ordine di data).
+    const puntiGrafico = reportEntries.filter(e => e.grafico).map(e => e.grafico);
 
     // Mostra in ordine decrescente di data.
     reportEntries.sort((a,b) => b.date.localeCompare(a.date));
@@ -2457,7 +2457,8 @@ function renderAuditTab() {
             <td class="font-medium">${entry.fatturatoText}</td>
             <td>${entry.rilevatoText}</td>
             <td class="text-${entry.statusClass} font-medium">${entry.diffDisplay}</td>
-            <td><span class="badge text-capitalize">${entry.tipoLettura}</span></td>
+            <td class="font-medium">${entry.saldoText}</td>
+            <td><span class="badge text-capitalize">${entry.tipoLettura}</span>${entry.dataLetturaText ? `<br><small class="text-secondary">${entry.dataLetturaText}</small>` : ""}</td>
             <td>${entry.statusBadge}</td>
             <td style="font-size:0.85rem;" class="text-secondary">${entry.actionText}</td>
         `;
@@ -2466,8 +2467,8 @@ function renderAuditTab() {
 
     updateAuditCounters(countOk, countOver, countUnder, countNa);
 
-    // Disegna il confronto consumo fatturato vs rilevato per periodo.
-    renderAuditTimelineChart(utility, reportEntries.length ? bills : [], readings);
+    // Disegna il confronto consumo fatturato vs rilevato (e il saldo) per bolletta.
+    renderAuditTimelineChart(utility, puntiGrafico);
 
     // Avviso variazioni prezzo/consumo (tutte le utenze) → rimanda alla tab Andamento Prezzi.
     const alertEl = document.getElementById("audit-prezzi-alert");
@@ -2491,51 +2492,60 @@ function updateAuditCounters(ok, over, under, na) {
     document.getElementById("audit-badge-na").textContent = `Non verificabili: ${na}`;
 }
 
-// GRAFICO DI CONFRONTO: consumo FATTURATO vs RILEVATO per periodo.
-// Una coppia di barre (rossa = fatturato, verde = rilevato) per ogni bolletta verificabile.
-function renderAuditTimelineChart(utility, bills, readings) {
+// GRAFICO DI CONFRONTO: consumo FATTURATO vs RILEVATO per bolletta verificabile
+// (barre rossa/verde) e, per gas/acqua, il SALDO come linea tratteggiata sulla
+// scala di destra. 'punti' = [{ label, fatturato, rilevato, saldo }] in ordine
+// cronologico (null = dato assente: la barra/il punto non si disegna).
+function renderAuditTimelineChart(utility, punti) {
     const ctx = document.getElementById("chart-audit-timeline").getContext("2d");
     if (state.charts.audit) state.charts.audit.destroy();
 
     const unit = unitForUtility(utility);
-    const sortedReadings = (readings || []).slice().sort((a,b) => a.data.localeCompare(b.data));
+    const lista = punti || [];
+    const conSaldo = lista.some(p => p.saldo != null);
 
-    // Considera solo le bollette verificabili, ordinate cronologicamente.
-    const verificabili = (bills || [])
-        .slice()
-        .sort((a,b) => a.data.localeCompare(b.data))
-        .map(b => ({ bill: b, audit: auditConsumoForBill(b, sortedReadings) }))
-        .filter(x => x.audit.verifiable);
-
-    const labels = verificabili.map(x => {
-        // Etichetta = periodo "mese fine" se disponibile, altrimenti data bolletta.
-        const fine = x.bill.periodo_fine || x.bill.data;
-        return formatDate(fine);
-    });
-    const datasetFatturato = verificabili.map(x => x.audit.consumoFatturato);
-    const datasetRilevato = verificabili.map(x => x.audit.consumoRilevato);
+    const datasets = [
+        {
+            label: `Consumo Fatturato (${unit})`,
+            data: lista.map(p => p.fatturato),
+            backgroundColor: "rgba(239, 68, 68, 0.65)",
+            borderColor: "#ef4444",
+            borderWidth: 1,
+            order: 2
+        },
+        {
+            label: `Consumo Rilevato (${unit})`,
+            data: lista.map(p => p.rilevato),
+            backgroundColor: "rgba(16, 185, 129, 0.65)",
+            borderColor: "#10b981",
+            borderWidth: 1,
+            order: 2
+        }
+    ];
+    const scales = {
+        x: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
+        y: { beginAtZero: true, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } }
+    };
+    if (conSaldo) {
+        datasets.push({
+            type: "line",
+            label: `Saldo (${unit})`,
+            data: lista.map(p => p.saldo),
+            borderColor: "#f59e0b",
+            backgroundColor: "#f59e0b",
+            borderDash: [6, 4],
+            borderWidth: 2,
+            pointRadius: 3,
+            spanGaps: true,
+            yAxisID: "y1",
+            order: 1
+        });
+        scales.y1 = { position: "right", grid: { drawOnChartArea: false }, ticks: { color: "#f59e0b" } };
+    }
 
     state.charts.audit = new Chart(ctx, {
         type: "bar",
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: `Consumo Fatturato (${unit})`,
-                    data: datasetFatturato,
-                    backgroundColor: "rgba(239, 68, 68, 0.65)",
-                    borderColor: "#ef4444",
-                    borderWidth: 1
-                },
-                {
-                    label: `Consumo Rilevato (${unit})`,
-                    data: datasetRilevato,
-                    backgroundColor: "rgba(16, 185, 129, 0.65)",
-                    borderColor: "#10b981",
-                    borderWidth: 1
-                }
-            ]
-        },
+        data: { labels: lista.map(p => p.label), datasets },
         options: {
             responsive: true,
             maintainAspectRatio: false,
@@ -2543,15 +2553,121 @@ function renderAuditTimelineChart(utility, bills, readings) {
                 mode: "index",
                 intersect: false
             },
-            scales: {
-                x: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
-                y: { beginAtZero: true, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } }
-            },
+            scales,
             plugins: {
                 legend: { labels: { color: "#f8fafc" } }
             }
         }
     });
+}
+
+// Numero per la tabella audit: al più un decimale (le autoletture interpolate ne hanno).
+function fmtNumAudit(x) {
+    return String(Math.round(x * 10) / 10);
+}
+
+// Voce della tabella audit col confronto per MESE sulle autoletture (luce, o
+// gas/acqua senza la data della lettura fatturata).
+function voceAuditMensile(bill, audit, unit) {
+    const v = {
+        fatturatoText: audit.consumoFatturato != null ? `${audit.consumoFatturato} ${unit}` : "-",
+        rilevatoText: "-",
+        diffDisplay: "-",
+        saldoText: "—",
+        grafico: null
+    };
+    if (!audit.verifiable) {
+        v.rilevatoText = "n/d";
+        v.statusBadge = `<span class="badge badge-secondary">Non verificabile</span>`;
+        v.actionText = audit.reason || "Dati insufficienti per la verifica.";
+        v.statusClass = "secondary";
+        return v;
+    }
+    v.rilevatoText = `${audit.consumoRilevato} ${unit}`;
+    const pct = Math.round(audit.deltaPct * 100);
+    const segno = audit.delta > 0 ? "+" : "";
+    v.diffDisplay = `${segno}${audit.delta} ${unit} (${segno}${pct}%)`;
+    v.grafico = { label: formatDate(bill.periodo_fine || bill.data), fatturato: audit.consumoFatturato, rilevato: audit.consumoRilevato, saldo: null };
+
+    if (Math.abs(audit.deltaPct) <= SOGLIA_AUDIT) {
+        v.statusBadge = `<span class="badge badge-success">Allineata</span>`;
+        v.actionText = "Il consumo fatturato corrisponde a quello rilevato. Nessuna azione necessaria.";
+        v.statusClass = "success";
+    } else if (audit.delta > 0) {
+        v.statusBadge = `<span class="badge badge-danger">Sovrafatturata</span>`;
+        v.actionText = `Fatturati +${audit.delta} ${unit} (${pct}%) oltre il consumo reale rilevato. Verifica la bolletta e invia un'autolettura.`;
+        v.statusClass = "danger";
+    } else {
+        v.statusBadge = `<span class="badge badge-warning">Conguaglio atteso</span>`;
+        v.actionText = `Consumo reale superiore di ${Math.abs(audit.delta)} ${unit} (${Math.abs(pct)}%) rispetto al fatturato. Possibile conguaglio futuro.`;
+        v.statusClass = "warning";
+    }
+    return v;
+}
+
+// Voce della tabella audit col SALDO (gas/acqua, vedi auditSaldoBollette).
+// L'azione suggerita scompone il netto fatturato: consumo reale del periodo +
+// recupero del saldo della bolletta precedente + nuovo saldo, così si vede se
+// gli arretrati di una bolletta sono stati fatturati nella successiva.
+function voceAuditSaldo(s, unit) {
+    const n = fmtNumAudit;
+    const v = { fatturatoText: "-", rilevatoText: "-", diffDisplay: "-", saldoText: "—", grafico: null };
+
+    // Fatturato NETTO; il lordo stampato in bolletta, se diverso, nel suggerimento.
+    if (s.netto != null) {
+        const lordoDiverso = s.lordo != null && Math.abs(s.lordo - s.netto) >= 0.5;
+        v.fatturatoText = lordoDiverso
+            ? `<span title="In bolletta: ${n(s.lordo)} ${unit} lordi, di cui ${n(s.lordo - s.netto)} già fatturati nelle bollette precedenti (acconti restituiti o ricalcolati).">${n(s.netto)} ${unit} ⓘ</span>`
+            : `${n(s.netto)} ${unit}`;
+    } else if (s.lordo != null) {
+        v.fatturatoText = `${n(s.lordo)} ${unit}`;
+    }
+
+    if (!s.verifiable) {
+        v.rilevatoText = "n/d";
+        v.statusBadge = `<span class="badge badge-secondary">Non verificabile</span>`;
+        v.actionText = s.reason;
+        v.statusClass = "secondary";
+        return v;
+    }
+    const dataTxt = formatDate(s.dataLettura);
+    if (s.reale != null) v.rilevatoText = `${n(s.reale)} ${unit}`;
+    if (s.differenza != null) v.diffDisplay = `${s.differenza > 0 ? "+" : ""}${n(s.differenza)} ${unit}`;
+    // Sotto il saldo il confronto per esteso: lettura fatturata contro la tua.
+    v.saldoText = `${s.saldo > 0 ? "+" : ""}${n(s.saldo)} ${unit}` +
+        `<br><small class="text-secondary" title="Lettura fatturata da Iren al ${dataTxt} contro la tua autolettura dello stesso giorno (ricavata dalle autoletture vicine se quel giorno non l'hai presa).">Iren ${n(s.letturaFatturata)} · tua ${n(s.tua)}</small>`;
+    v.grafico = { label: dataTxt, fatturato: s.netto, rilevato: s.reale, saldo: s.saldo };
+
+    let composizione = "";
+    if (s.netto != null && s.reale != null && s.saldoPrecedente != null) {
+        composizione = `Fatturati ${n(s.netto)} ${unit} = ${n(s.reale)} consumati`;
+        const recupero = -s.saldoPrecedente;
+        if (recupero >= 0.5) composizione += ` + ${n(recupero)} arretrati dalla bolletta precedente`;
+        if (recupero <= -0.5) composizione += ` − ${n(-recupero)} già pagati in anticipo nella precedente`;
+        if (s.saldo <= -0.5) composizione += ` − ${n(-s.saldo)} non ancora fatturati`;
+        if (s.saldo >= 0.5) composizione += ` + ${n(s.saldo)} fatturati in anticipo`;
+        composizione += ". ";
+    }
+
+    const tolleranza = Math.max(1, SOGLIA_AUDIT * (s.reale || 0));
+    if (Math.abs(s.saldo) <= tolleranza) {
+        v.statusBadge = `<span class="badge badge-success">Allineata</span>`;
+        v.actionText = composizione + `In pari: al ${dataTxt} hai pagato quanto consumato.`;
+        v.statusClass = "success";
+    } else if (s.saldo < 0) {
+        v.statusBadge = `<span class="badge badge-warning">Conguaglio atteso</span>`;
+        v.actionText = composizione + `Al ${dataTxt} restano ${n(-s.saldo)} ${unit} consumati e non ancora fatturati${s.tipo === "stimata" ? " (la lettura in bolletta è stimata)" : ""}: arriveranno nelle prossime bollette.`;
+        v.statusClass = "warning";
+    } else if (s.tipo === "stimata") {
+        v.statusBadge = `<span class="badge badge-danger">Anticipo su stima</span>`;
+        v.actionText = composizione + `La lettura del ${dataTxt} è stimata e supera la tua di ${n(s.saldo)} ${unit}: li hai pagati in anticipo e verranno restituiti al prossimo ricalcolo. Comunicare l'autolettura lo accelera.`;
+        v.statusClass = "danger";
+    } else {
+        v.statusBadge = `<span class="badge badge-danger">Sovrafatturata</span>`;
+        v.actionText = composizione + `La lettura fatturata del ${dataTxt} (${n(s.letturaFatturata)}) supera la tua (${n(s.tua)}) di ${n(s.saldo)} ${unit}: controlla contatore e bolletta.`;
+        v.statusClass = "danger";
+    }
+    return v;
 }
 
 // --- ANDAMENTO PREZZI: monitoraggio dei FATTORI tariffari ---
@@ -3466,6 +3582,92 @@ function readingForMonth(sortedReadings, targetYm) {
         }
     }
     return null;
+}
+
+// --- VERIFICA ANOMALIE: SALDO tra letture fatturate e autoletture (gas/acqua) ---
+// Il consumo stampato in bolletta è LORDO: le fatture di conguaglio ripartono
+// dall'ultima lettura reale e restituiscono a parte gli acconti già pagati (in
+// m³, o in euro nelle "Conguaglio/Rettifica"), per cui confrontarlo col consumo
+// del periodo dava falsi "Sovrafatturata" (acqua mar–mag 2026: 24 contro 18
+// reali, ma 7 erano acconti restituiti). Il dato che non inganna è la LETTURA
+// FATTURATA: l'ultima riga del quadro letture (bill.lettura al bill.data_lettura,
+// reale o stimata), da cui riparte la bolletta successiva. Per ogni bolletta:
+//   netto  = lettura fatturata − lettura fatturata della bolletta precedente
+//   reale  = tua autolettura alla data − tua autolettura alla data precedente
+//   saldo  = lettura fatturata − tua autolettura alla stessa data
+// saldo < 0: consumato e non ancora fatturato (arriverà); > 0: pagato in anticipo.
+// Solo per i record con data_lettura (letta dal quadro letture dal backend).
+const GIORNI_TOLLERANZA_LETTURA = 10;
+
+// Autolettura alla data 'giorno' (YYYY-MM-DD), interpolata linearmente tra le
+// due che la racchiudono. Dopo l'ultima autolettura vale l'ultima se entro
+// GIORNI_TOLLERANZA_LETTURA giorni (es. lettura Iren del 03/09, tua del 31/08);
+// null prima della prima o troppo oltre l'ultima.
+function autoletturaAllaData(sortedReadings, giorno) {
+    const t = Date.parse(giorno);
+    if (!isFinite(t)) return null;
+    const punti = (sortedReadings || [])
+        .map(r => ({ t: Date.parse(r.data), v: readingValue(r) }))
+        .filter(p => isFinite(p.t) && isFinite(p.v));
+    for (let i = 0; i < punti.length; i++) {
+        if (punti[i].t === t) return punti[i].v;
+        if (punti[i].t > t) {
+            if (i === 0) return null;
+            const a = punti[i - 1], b = punti[i];
+            return a.v + (b.v - a.v) * (t - a.t) / (b.t - a.t);
+        }
+    }
+    if (!punti.length) return null;
+    const ultimo = punti[punti.length - 1];
+    return (t - ultimo.t) / 86400000 <= GIORNI_TOLLERANZA_LETTURA ? ultimo.v : null;
+}
+
+// Consumo NETTO fatturato da una bolletta gas/acqua: la sua lettura fatturata meno
+// quella della bolletta precedente (per data_lettura). null se non calcolabile
+// (record senza data_lettura, o prima bolletta della serie).
+function nettoFatturato(bill, billsUtenza) {
+    if (!bill || !bill.data_lettura || typeof bill.lettura !== "number" || !isFinite(bill.lettura)) return null;
+    const prec = (billsUtenza || [])
+        .filter(b => b !== bill && b.data_lettura && b.data_lettura < bill.data_lettura
+            && typeof b.lettura === "number" && isFinite(b.lettura))
+        .sort((a, b) => b.data_lettura.localeCompare(a.data_lettura))[0];
+    return prec ? bill.lettura - prec.lettura : null;
+}
+
+// Saldo per le bollette con lettura fatturata datata. Ritorna una Map
+// bolletta → { verifiable, reason, dataLettura, tipo, letturaFatturata, tua,
+// netto, lordo, reale, differenza, saldo, saldoPrecedente }.
+function auditSaldoBollette(bills, sortedReadings) {
+    const esiti = new Map();
+    const arrotonda = x => Math.round(x * 10) / 10;
+    const datate = (bills || [])
+        .filter(b => b.data_lettura && typeof b.lettura === "number" && isFinite(b.lettura))
+        .sort((a, b) => a.data_lettura.localeCompare(b.data_lettura));
+    let prec = null;
+    datate.forEach(b => {
+        const tua = autoletturaAllaData(sortedReadings, b.data_lettura);
+        const esito = {
+            verifiable: tua != null,
+            reason: tua == null ? `Manca una tua autolettura vicino al ${formatDate(b.data_lettura)} (data della lettura in bolletta).` : null,
+            dataLettura: b.data_lettura,
+            tipo: b.tipo_lettura || null,
+            letturaFatturata: b.lettura,
+            tua: tua,
+            netto: prec ? b.lettura - prec.lettura : null,
+            lordo: (typeof b.consumo_fatturato === "number" && isFinite(b.consumo_fatturato)) ? b.consumo_fatturato : null,
+            reale: null,
+            differenza: null,
+            saldo: tua != null ? arrotonda(b.lettura - tua) : null,
+            saldoPrecedente: prec ? prec.saldo : null
+        };
+        if (tua != null && prec && prec.tua != null) {
+            esito.reale = arrotonda(tua - prec.tua);
+            esito.differenza = arrotonda(esito.netto - esito.reale);
+        }
+        esiti.set(b, esito);
+        prec = { lettura: b.lettura, tua: tua, saldo: esito.saldo };
+    });
+    return esiti;
 }
 
 // Audit del consumo di una singola bolletta: confronta il consumo fatturato con

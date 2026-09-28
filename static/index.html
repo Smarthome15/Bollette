@@ -393,12 +393,16 @@
 
                                 <div class="form-row">
                                     <div class="form-group col-6">
-                                        <label for="bill-type">Tipo di Lettura</label>
+                                        <label for="bill-type" title="Tipo dell'ultima lettura del quadro letture, quella che la bolletta fattura: reale o stimata.">Tipo di Lettura</label>
                                         <select id="bill-type">
                                             <option value="rilevata">Rilevata (Reale)</option>
                                             <option value="stimata">Stimata</option>
                                             <option value="mista">Mista / Acconto</option>
                                         </select>
+                                    </div>
+                                    <div class="form-group col-6">
+                                        <label for="bill-data-lettura" title="Data dell'ultima riga del quadro letture: la lettura (reale o stimata) che la bolletta ha fatturato e da cui riparte la successiva. Serve alla Verifica Anomalie per il saldo con le tue autoletture.">Data ultima lettura in bolletta</label>
+                                        <input type="date" id="bill-data-lettura">
                                     </div>
                                 </div>
 
@@ -664,7 +668,7 @@
                 <!-- Tabella delle discrepanze -->
                 <div class="glass-card mt-4">
                     <h3>Report di Audit delle Bollette</h3>
-                    <p class="subtitle">Per ogni bolletta il consumo dichiarato viene confrontato con il consumo rilevato dalle autoletture nello stesso periodo. L'abbinamento delle autoletture avviene per <strong>mese</strong>: il consumo rilevato è la differenza tra la lettura del mese di fine periodo e quella del mese precedente all'inizio.</p>
+                    <p class="subtitle">Gas e acqua: ogni bolletta si confronta sulla <strong>lettura che ha fatturato</strong> (l'ultima del quadro letture, reale o stimata) con la tua autolettura alla stessa data. Il <strong>saldo</strong> dice se finora hai pagato esattamente il consumato: negativo = consumo non ancora fatturato (arriverà), positivo = pagato in anticipo. Il consumo stampato in bolletta è lordo (le fatture di conguaglio rifatturano e poi restituiscono gli acconti): qui si usa il netto. Luce: confronto del consumo per <strong>mese</strong> sulle autoletture.</p>
 
                     <div class="table-responsive mt-3">
                         <table class="data-table">
@@ -672,10 +676,11 @@
                                 <tr>
                                     <th>Bolletta (Data) <span class="th-help" title="Data della bolletta analizzata.">ⓘ</span></th>
                                     <th>Periodo <span class="th-help" title="Periodo di fatturazione della bolletta (inizio → fine), usato per abbinare le autoletture.">ⓘ</span></th>
-                                    <th>Consumo Fatturato <span class="th-help" title="Consumo del periodo dichiarato nella bolletta.">ⓘ</span></th>
-                                    <th>Consumo Rilevato <span class="th-help" title="Consumo ricavato dalle autoletture nello stesso periodo (differenza tra lettura di fine e quella prima dell'inizio).">ⓘ</span></th>
-                                    <th>Discrepanza <span class="th-help" title="Differenza tra fatturato e rilevato, in valore e percentuale.">ⓘ</span></th>
-                                    <th>Stato Rilevazione <span class="th-help" title="Tipo di lettura dichiarata in bolletta: rilevata, stimata o mista.">ⓘ</span></th>
+                                    <th>Consumo Fatturato <span class="th-help" title="Gas/acqua: consumo NETTO fatturato = lettura fatturata meno quella della bolletta precedente (il valore stampato in bolletta, lordo, è nel suggerimento). Luce: consumo dichiarato in bolletta.">ⓘ</span></th>
+                                    <th>Consumo Rilevato <span class="th-help" title="Consumo dalle tue autoletture tra le stesse date (gas/acqua: date delle letture fatturate, con interpolazione tra le autoletture mensili; luce: mese di fine periodo meno mese prima dell'inizio).">ⓘ</span></th>
+                                    <th>Discrepanza <span class="th-help" title="Differenza del periodo tra fatturato e rilevato. Gas/acqua: include il recupero del saldo della bolletta precedente.">ⓘ</span></th>
+                                    <th>Saldo <span class="th-help" title="Gas/acqua: lettura fatturata meno la tua autolettura alla stessa data. Negativo = hai consumato più di quanto fatturato finora (arriverà nelle prossime bollette); positivo = pagato in anticipo (su lettura stimata verrà restituito); zero = in pari. Sotto: la lettura fatturata da Iren e la tua dello stesso giorno.">ⓘ</span></th>
+                                    <th>Stato Rilevazione <span class="th-help" title="Tipo della lettura fatturata (rilevata o stimata) e sua data.">ⓘ</span></th>
                                     <th>Stato Verifica <span class="th-help" title="Esito: Allineata, Sovrafatturata, Conguaglio atteso o Non verificabile (dati insufficienti).">ⓘ</span></th>
                                     <th>Azione Suggerita <span class="th-help" title="Cosa fare in base all'esito (es. verificare la bolletta, inviare un'autolettura).">ⓘ</span></th>
                                 </tr>
@@ -690,7 +695,7 @@
                 <!-- Analisi Visuale Discrepanze -->
                 <div class="glass-card mt-4">
                     <h3>Consumo Fatturato vs Rilevato per Periodo</h3>
-                    <p class="subtitle">Per ogni bolletta verificabile: la barra rossa è il consumo fatturato, la barra verde è il consumo realmente rilevato dalle autoletture. Se la barra rossa supera la verde, stai pagando più di quanto hai consumato.</p>
+                    <p class="subtitle">Per ogni bolletta verificabile: la barra rossa è il consumo fatturato (netto, per gas e acqua), la barra verde è il consumo realmente rilevato dalle autoletture. La linea arancione (scala a destra) è il saldo: sopra lo zero hai pagato in anticipo, sotto lo zero c'è consumo non ancora fatturato.</p>
                     <div class="chart-wrapper mt-3" style="height: 350px;">
                         <canvas id="chart-audit-timeline"></canvas>
                     </div>

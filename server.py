@@ -6,6 +6,7 @@ import re
 import socket
 import shutil
 import hashlib
+import calendar
 import secrets as py_secrets  # compare_digest (non confondere con secrets_local)
 import traceback
 from datetime import datetime
@@ -497,6 +498,190 @@ def _num_it(s: str) -> float:
     return float(s.replace(".", "").replace(",", "."))
 
 
+_MESI_IT = ["GENNAIO", "FEBBRAIO", "MARZO", "APRILE", "MAGGIO", "GIUGNO", "LUGLIO",
+            "AGOSTO", "SETTEMBRE", "OTTOBRE", "NOVEMBRE", "DICEMBRE"]
+
+
+def _data_iso(gg_mm_aaaa: str) -> str:
+    """'03/09/2026' → '2026-09-03'."""
+    g, m, a = gg_mm_aaaa.split("/")
+    return f"{a}-{m}-{g}"
+
+
+def _periodo_riferimento_acqua(text: str) -> dict:
+    """ACQUA: periodo coperto dalla bolletta Iren. Fonte primaria: l'intervallo
+    delle QUOTE FISSE del dettaglio (righe "Quota Fissa GG/MM/AAAA - GG/MM/AAAA
+    €/unità/anno"), preciso al giorno: 17/11/2023 a inizio contratto, 03/09/2026
+    quando la bolletta chiude su una lettura reale senza acconto. Le righe che
+    ricalcolano quote fisse di periodi passati non hanno "€/unità/anno" e restano
+    fuori. Ripiego: il "periodo di riferimento" in MESI dell'intestazione
+    ("NOVEMBRE 2023", "MARZO - MAGGIO 2026", "DICEMBRE 2025 - FEBBRAIO 2026") che
+    pdfplumber, per l'impaginazione a due colonne, mette un paio di righe SOTTO
+    l'etichetta (sulla sua riga finisce l'indirizzo) → primo giorno del primo
+    mese, ultimo giorno dell'ultimo. Gemini non agganciava né l'uno né l'altro
+    sulla bolletta del 17/09/2026 ("GIUGNO - SETTEMBRE 2026") e lasciava null."""
+    quote_fisse = re.findall(r"Quota Fissa (\d{2}/\d{2}/\d{4}) - (\d{2}/\d{2}/\d{4}) €/unità/anno", text)
+    if quote_fisse:
+        return {
+            "periodo_inizio": min(_data_iso(inizio) for inizio, _ in quote_fisse),
+            "periodo_fine": max(_data_iso(fine) for _, fine in quote_fisse),
+        }
+    etichetta = re.search(r"periodo di riferimento", text, re.IGNORECASE)
+    if not etichetta:
+        return {}
+    mesi = "|".join(_MESI_IT)
+    m = re.search(rf"^\s*({mesi})(?:\s+(\d{{4}}))?(?:\s*-\s*({mesi}))?\s+(\d{{4}})\s*$",
+                  text[etichetta.end():etichetta.end() + 300], re.MULTILINE | re.IGNORECASE)
+    if not m:
+        return {}
+    mese_inizio = _MESI_IT.index(m.group(1).upper()) + 1
+    mese_fine = _MESI_IT.index((m.group(3) or m.group(1)).upper()) + 1
+    anno_fine = int(m.group(4))
+    if m.group(2):
+        anno_inizio = int(m.group(2))
+    else:
+        anno_inizio = anno_fine if mese_inizio <= mese_fine else anno_fine - 1
+    ultimo_giorno = calendar.monthrange(anno_fine, mese_fine)[1]
+    return {
+        "periodo_inizio": f"{anno_inizio:04d}-{mese_inizio:02d}-01",
+        "periodo_fine": f"{anno_fine:04d}-{mese_fine:02d}-{ultimo_giorno:02d}",
+    }
+
+
+# Quadro letture delle bollette Iren. ACQUA: "03/09/2026 174 8 Rilevata" (tipo in
+# fondo, prima riga "Precedente" senza consumo); GAS dal 2025: "31/08/2026 stimata
+# 1.401 18 1,0000000 18,000000" (tipo in mezzo, punto delle migliaia); GAS fino al
+# 2024: blocchi "Consumi rilevati nel periodo 01/01/2024 - 01/02/2024 / Lettura
+# precedente Lettura attuale … / rilevata rilevata / 141 254 113,000000 …".
+_NUM_LETTURA = r"(\d{1,3}(?:\.\d{3})+|\d+)"
+_RE_LETTURE = {
+    "ACQUA": re.compile(rf"^(\d{{2}}/\d{{2}}/\d{{4}}) {_NUM_LETTURA}(?: (\d+))? "
+                        r"(Precedente|Rilevata|Stimata|Autolettura)\b", re.MULTILINE | re.IGNORECASE),
+    "GAS": re.compile(rf"^(\d{{2}}/\d{{2}}/\d{{4}}) (rilevata|stimata|autolettura) {_NUM_LETTURA}(?: (\d+))?",
+                      re.MULTILINE | re.IGNORECASE),
+}
+_RE_LETTURE_GAS_2024 = re.compile(
+    r"Consumi \w+ nel periodo (\d{2}/\d{2}/\d{4}) - (\d{2}/\d{2}/\d{4})\s*\n"
+    r"Lettura precedente[^\n]*\n(\w+) (\w+)\s*\n"
+    rf"{_NUM_LETTURA} {_NUM_LETTURA} (\d+)(?:,\d+)?", re.IGNORECASE)
+
+
+def _letture_bolletta(text: str, utility_type: str) -> list:
+    """Righe del quadro letture (ACQUA/GAS) in ordine di data: [{data, lettura,
+    consumo, tipo}]. Lista vuota se il layout non è riconosciuto (es. LUCE)."""
+    ut = (utility_type or "").upper()
+    rx = _RE_LETTURE.get(ut)
+    if not rx:
+        return []
+    righe = []
+    for m in rx.finditer(text):
+        if ut == "ACQUA":
+            data, valore, consumo, tipo = m.groups()
+        else:
+            data, tipo, valore, consumo = m.groups()
+        righe.append({"data": _data_iso(data), "lettura": int(valore.replace(".", "")),
+                      "consumo": int(consumo) if consumo else None, "tipo": tipo.lower()})
+    if ut == "GAS":
+        for m in _RE_LETTURE_GAS_2024.finditer(text):
+            dal, al, tipo_prec, tipo_att, prec, att, consumo = m.groups()
+            righe.append({"data": _data_iso(dal), "lettura": int(prec.replace(".", "")),
+                          "consumo": None, "tipo": "precedente"})
+            righe.append({"data": _data_iso(al), "lettura": int(att.replace(".", "")),
+                          "consumo": int(consumo), "tipo": tipo_att.lower()})
+    unici = []
+    for riga in righe:
+        if riga not in unici:
+            unici.append(riga)
+    unici.sort(key=lambda r: r["data"])
+    return unici
+
+
+def _lettura_fatturata(text: str, utility_type: str) -> dict:
+    """L'ULTIMA riga del quadro letture è la posizione del contatore FATTURATA
+    dalla bolletta, reale o stimata: la bolletta successiva riparte da lì. È il
+    dato su cui Verifica Anomalie calcola il saldo con le autoletture (il
+    "consumo totale fatturato" stampato è invece lordo: rifattura dall'ultima
+    lettura reale e restituisce a parte gli acconti)."""
+    righe = [r for r in _letture_bolletta(text, utility_type) if r["tipo"] != "precedente"]
+    if not righe:
+        return {}
+    ultima = righe[-1]
+    return {
+        "lettura": ultima["lettura"],
+        "data_lettura": ultima["data"],
+        "tipo_lettura": "stimata" if ultima["tipo"] == "stimata" else "rilevata",
+    }
+
+
+def estrai_scheda_bolletta(text: str, utility_type: str) -> dict:
+    """«Scheda bolletta»: i dati STRUTTURATI letti in modo deterministico dal testo
+    del PDF (quadro letture, periodo, consumo lordo/stimato, acconti restituiti,
+    tipo di fattura). Salvata accanto al PDF (_salva_scheda_bolletta) insieme al
+    testo, così le analisi lavorano su dati già estratti invece di rileggere il
+    PDF. Chiavi assenti/None se la voce non si trova (mai zeri finti); fanno
+    eccezione `stimato` e `acconti_restituiti`, 0 quando la bolletta non ne
+    riporta perché non ce ne sono."""
+    ut = (utility_type or "").upper()
+    scheda = {"letture": _letture_bolletta(text, ut)}
+    if ut == "ACQUA":
+        m = re.search(r"^Fattura di ([^\n]+)", text, re.MULTILINE)
+        scheda["tipo_fattura"] = m.group(1).strip() if m else None
+        scheda["periodo"] = _periodo_riferimento_acqua(text) or None
+        consumo = {}
+        et = re.search(r"Consumo totale fatturato", text)
+        if et:
+            blocco = text[et.end():et.end() + 200]
+            m = re.search(r"mc (\d+)", blocco)
+            consumo["totale"] = int(m.group(1)) if m else None
+            m = re.search(r"\(dal (\d{2}/\d{2}/\d{4}) al (\d{2}/\d{2}/\d{4})\)", blocco)
+            if m:
+                consumo["dal"], consumo["al"] = _data_iso(m.group(1)), _data_iso(m.group(2))
+        m = re.search(r"Di cui Consumo stimato mc (\d+)", text, re.IGNORECASE)
+        consumo["stimato"] = int(m.group(1)) if m else 0
+        m = re.search(r"Restituzione acconti mc (\d+)", text)
+        consumo["acconti_restituiti"] = int(m.group(1)) if m else 0
+        scheda["consumo"] = consumo
+        m = re.search(r"Ricalcoli per conguaglio (-?\d+(?:\.\d{3})*,\d{2})", text)
+        scheda["ricalcoli_euro"] = _num_it(m.group(1)) if m else None
+    elif ut == "GAS":
+        # "Periodo di riferimento: 01 LUGLIO 2026 - 31 AGOSTO 2026" (dal 2025) o
+        # "PERIODO 01 GENNAIO 2024 - 29 FEBBRAIO 2024" (fino al 2024).
+        m = re.search(r"(?:Periodo di riferimento:|PERIODO)\s*(\d{1,2}) ([A-Z]+) (\d{4}) - (\d{1,2}) ([A-Z]+) (\d{4})", text)
+        if m and m.group(2) in _MESI_IT and m.group(5) in _MESI_IT:
+            scheda["periodo"] = {
+                "periodo_inizio": f"{m.group(3)}-{_MESI_IT.index(m.group(2)) + 1:02d}-{int(m.group(1)):02d}",
+                "periodo_fine": f"{m.group(6)}-{_MESI_IT.index(m.group(5)) + 1:02d}-{int(m.group(4)):02d}",
+            }
+        consumo = {"totale": None}
+        et = re.search(r"Consumo totale fatturato nel periodo|Consumo gas", text)
+        if et:
+            m = re.search(r"(\d{1,3}(?:\.\d{3})*(?:,\d+)?) Smc", text[et.end():et.end() + 200])
+            consumo["totale"] = _num_it(m.group(1)) if m else None
+        m = re.search(r"di cui consumo stimato (\d{1,3}(?:\.\d{3})*(?:,\d+)?) Smc", text, re.IGNORECASE)
+        consumo["stimato"] = _num_it(m.group(1)) if m else sum(
+            r["consumo"] or 0 for r in scheda["letture"] if r["tipo"] == "stimata")
+        scheda["consumo"] = consumo
+    return scheda
+
+
+def _salva_scheda_bolletta(pdf_path: str, utility: str) -> str:
+    """Scrive accanto al PDF la sua «scheda» (stesso nome, .json): testo estratto
+    + dati strutturati. Ritorna il percorso del JSON."""
+    with pdfplumber.open(pdf_path) as pdf:
+        testo = "\n".join((p.extract_text() or "") for p in pdf.pages)
+    dati = {
+        "versione": 1,
+        "creata_il": datetime.now().isoformat(timespec="seconds"),
+        "pdf": os.path.basename(pdf_path),
+        "utenza": (utility or "").lower(),
+        "scheda": estrai_scheda_bolletta(testo, utility),
+        "testo": testo,
+    }
+    json_path = os.path.splitext(pdf_path)[0] + ".json"
+    scrivi_json_atomico(json_path, dati)
+    return json_path
+
+
 def estrai_campi_regex(text: str, utility_type: str) -> dict:
     """Estrazione DETERMINISTICA (senza Gemini) delle voci della bolletta Iren che
     nel quadro di dettaglio hanno un'etichetta stabile:
@@ -506,13 +691,23 @@ def estrai_campi_regex(text: str, utility_type: str) -> dict:
       - GAS   prezzo_vendita_energia: righe "Materia prima gas" (fino al 2025) o
               "Prezzo di vendita di gas naturale" (dal 2026) ... Euro/smc PREZZO
               QUANTITÀ TOTALE (le righe a quantità 0 con IVA 22% pesano zero).
+      - ACQUA periodo_inizio/periodo_fine: intervallo delle quote fisse, ripiego
+              il "periodo di riferimento" in mesi (vedi _periodo_riferimento_acqua).
+      - ACQUA/GAS lettura, data_lettura, tipo_lettura: ultima riga del quadro
+              letture = posizione del contatore fatturata (vedi _lettura_fatturata).
     Il prezzo è la media PESATA sulle quantità quando la riga è ripetuta (un mese
     per riga). Non è un fallback generico dell'estrazione (quello è stato tolto
     apposta): copre solo queste voci, testate sulle 28 bollette luce + 18 gas
-    reali (30/08/2026), e serve a completare/verificare ciò che Gemini
-    restituisce. Chiavi assenti se la voce non è stata trovata (mai zeri finti)."""
+    reali (30/08/2026) e sulle 12 acqua + 17 gas (28/09/2026), e serve a
+    completare/verificare ciò che Gemini restituisce. Chiavi assenti se la voce
+    non è stata trovata (mai zeri finti)."""
     out = {}
     ut = (utility_type or "").upper()
+    if ut in ("ACQUA", "GAS"):
+        out.update(_lettura_fatturata(text, ut))
+    if ut == "ACQUA":
+        out.update(_periodo_riferimento_acqua(text))
+        return out
     if ut == "LUCE":
         m = re.search(r"Canone di abbonamento alla televisione[^\n]*?(\d+(?:\.\d{3})*,\d{2})", text)
         if m:
@@ -593,11 +788,19 @@ def parse_pdf_gemini(text: str, utility_type: str):
 
             ATTENZIONE PERIODO (ACQUA): la bolletta dell'acqua riporta spesso più date
             (data emissione, data scadenza, periodo di lettura del contatore, eventuali
-            acconti/conguagli). Per periodo_inizio/periodo_fine usa ESCLUSIVAMENTE la
-            sezione "Periodo di riferimento" (la dicitura può essere "Periodo di
-            riferimento: dal GG/MM/AAAA al GG/MM/AAAA"). NON usare il periodo di lettura,
-            la data di emissione né la scadenza. Se la sezione "Periodo di riferimento"
-            non è presente, metti null su entrambi.
+            acconti/conguagli). periodo_inizio/periodo_fine = il periodo coperto dalle
+            QUOTE FISSE della bolletta (DETTAGLIO Quote Fisse, righe "Quota Fissa
+            GG/MM/AAAA - GG/MM/AAAA €/unità/anno"): la PRIMA data di inizio e l'ULTIMA
+            data di fine. Corrisponde al "periodo di riferimento" in MESI
+            dell'intestazione (es. "MARZO - MAGGIO 2026" → 2026-03-01 / 2026-05-31),
+            che per l'impaginazione su due colonne compare qualche riga SOTTO
+            l'etichetta, ma è preciso al giorno: se la bolletta chiude su una lettura
+            reale (es. "GIUGNO - SETTEMBRE 2026" con quote fisse fino al 03/09/2026) la
+            fine è 2026-09-03. Senza quote fisse usa il periodo di riferimento in mesi
+            (primo giorno del primo mese → ultimo giorno dell'ultimo). NON usare il
+            periodo del "Consumo totale fatturato (dal … al …)", le righe di ricalcolo
+            di periodi passati, il periodo di lettura, la data di emissione né la
+            scadenza. Se non trovi nessuno dei due, metti null su entrambi.
             """
         prompt += f"\n\nTesto della bolletta:\n{text}"
         
@@ -708,7 +911,15 @@ async def api_upload_pdf(request: Request):
         contents = await pdf_file.read()
         with open(filepath, "wb") as f:
             f.write(contents)
-            
+
+        # «Scheda bolletta» accanto al PDF (stesso nome, .json): testo + dati
+        # strutturati, così le analisi non devono rileggere il PDF. Un errore qui
+        # non deve far fallire l'archiviazione della bolletta.
+        try:
+            _salva_scheda_bolletta(filepath, utility)
+        except Exception as e:
+            print(f"Scheda bolletta non creata per {filename}: {e}")
+
         # Restituiamo il percorso relativo da salvare nel record JSON
         relative_path = f"database/pdfs/{filename}"
         return JSONResponse({"success": True, "pdf_path": relative_path})
@@ -761,19 +972,26 @@ async def api_parse_pdf(request: Request):
 
             parsed_data["parsed_via"] = "gemini"
 
-            # LUCE/GAS: canone RAI e prezzo puro della materia prima hanno etichette
-            # stabili nel PDF → li rileggiamo anche con le regex e completiamo ciò
-            # che Gemini ha lasciato a null. Se entrambi hanno un valore e divergono,
-            # vince la regex (è la riga letterale della bolletta) e lo segnaliamo
-            # in `verifiche_regex` così il frontend può mostrarlo nel banner.
-            if utility.upper() in ("LUCE", "GAS"):
+            # LUCE/GAS: canone RAI e prezzo puro della materia prima; ACQUA: periodo
+            # di riferimento. Hanno etichette stabili nel PDF → li rileggiamo anche
+            # con le regex e completiamo ciò che Gemini ha lasciato a null. Se
+            # entrambi hanno un valore e divergono, vince la regex (è la riga
+            # letterale della bolletta) e lo segnaliamo in `verifiche_regex` così
+            # il frontend può mostrarlo nel banner.
+            if utility.upper() in ("LUCE", "GAS", "ACQUA"):
                 regex_vals = estrai_campi_regex(text_full, utility)
                 divergenze = []
                 for chiave, val_regex in regex_vals.items():
                     val_gemini = parsed_data.get(chiave)
                     if val_gemini is None:
                         parsed_data[chiave] = val_regex
-                    elif abs(float(val_gemini) - val_regex) > (0.005 if chiave == "canone_rai" else 0.0005):
+                        continue
+                    if isinstance(val_regex, str):
+                        # Date del periodo (ACQUA): confronto esatto.
+                        diverge = str(val_gemini) != val_regex
+                    else:
+                        diverge = abs(float(val_gemini) - val_regex) > (0.005 if chiave == "canone_rai" else 0.0005)
+                    if diverge:
                         divergenze.append(f"{chiave}: Gemini {val_gemini} ≠ bolletta {val_regex}")
                         parsed_data[chiave] = val_regex
                 if divergenze:
