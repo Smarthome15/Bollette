@@ -564,17 +564,57 @@ _RE_LETTURE_GAS_2024 = re.compile(
     r"Consumi \w+ nel periodo (\d{2}/\d{2}/\d{4}) - (\d{2}/\d{2}/\d{4})\s*\n"
     r"Lettura precedente[^\n]*\n(\w+) (\w+)\s*\n"
     rf"{_NUM_LETTURA} {_NUM_LETTURA} (\d+)(?:,\d+)?", re.IGNORECASE)
+# LUCE dal 2025: "31/08/2026 rilevata 498 531 576 4 4 6" (letture F1 F2 F3, poi i
+# consumi per fascia); fino al 2024: blocchi "Consumi rilevati nel periodo … /
+# Fasce Orarie Lettura precedente Lettura attuale … / rilevata rilevata / F1 11 37
+# 26 24% / F2 … / F3 …" (una riga per fascia).
+_RE_LETTURE_LUCE = re.compile(
+    rf"^(\d{{2}}/\d{{2}}/\d{{4}}) (rilevata|stimata|autolettura) {_NUM_LETTURA} {_NUM_LETTURA} {_NUM_LETTURA}"
+    r"(?: (\d+) (\d+) (\d+))?", re.MULTILINE | re.IGNORECASE)
+_RE_LETTURE_LUCE_2024 = re.compile(
+    r"Consumi \w+ nel periodo (\d{2}/\d{2}/\d{4}) - (\d{2}/\d{2}/\d{4})\s*\n(?:Livello[^\n]*\n)?"
+    r"Fasce Orarie Lettura precedente[^\n]*\n(\w+) (\w+)\s*\n"
+    rf"F1 {_NUM_LETTURA} {_NUM_LETTURA} (\d+)[^\n]*\n"
+    rf"F2 {_NUM_LETTURA} {_NUM_LETTURA} (\d+)[^\n]*\n"
+    rf"F3 {_NUM_LETTURA} {_NUM_LETTURA} (\d+)", re.IGNORECASE)
+
+
+def _intero(s: str) -> int:
+    """'1.401' → 1401 (letture con il punto delle migliaia)."""
+    return int(s.replace(".", ""))
+
+
+def _letture_luce(text: str) -> list:
+    """Righe del quadro letture LUCE: lettura = totale F1+F2+F3, più le fasce."""
+    righe = []
+    for m in _RE_LETTURE_LUCE.finditer(text):
+        data, tipo, f1, f2, f3, c1, c2, c3 = m.groups()
+        f = [_intero(f1), _intero(f2), _intero(f3)]
+        righe.append({"data": _data_iso(data), "lettura": sum(f), "f1": f[0], "f2": f[1], "f3": f[2],
+                      "consumo": (int(c1) + int(c2) + int(c3)) if c1 else None, "tipo": tipo.lower()})
+    for m in _RE_LETTURE_LUCE_2024.finditer(text):
+        dal, al, _tipo_prec, tipo_att, p1, a1, c1, p2, a2, c2, p3, a3, c3 = m.groups()
+        prec = [_intero(p1), _intero(p2), _intero(p3)]
+        att = [_intero(a1), _intero(a2), _intero(a3)]
+        righe.append({"data": _data_iso(dal), "lettura": sum(prec), "f1": prec[0], "f2": prec[1], "f3": prec[2],
+                      "consumo": None, "tipo": "precedente"})
+        righe.append({"data": _data_iso(al), "lettura": sum(att), "f1": att[0], "f2": att[1], "f3": att[2],
+                      "consumo": int(c1) + int(c2) + int(c3), "tipo": tipo_att.lower()})
+    return righe
 
 
 def _letture_bolletta(text: str, utility_type: str) -> list:
-    """Righe del quadro letture (ACQUA/GAS) in ordine di data: [{data, lettura,
-    consumo, tipo}]. Lista vuota se il layout non è riconosciuto (es. LUCE)."""
+    """Righe del quadro letture in ordine di data: [{data, lettura, consumo, tipo}]
+    (LUCE anche f1/f2/f3; lettura = totale). Lista vuota se il layout non è
+    riconosciuto."""
     ut = (utility_type or "").upper()
     rx = _RE_LETTURE.get(ut)
-    if not rx:
-        return []
     righe = []
-    for m in rx.finditer(text):
+    if ut == "LUCE":
+        righe = _letture_luce(text)
+    elif not rx:
+        return []
+    for m in (rx.finditer(text) if rx else []):
         if ut == "ACQUA":
             data, valore, consumo, tipo = m.groups()
         else:
@@ -593,7 +633,10 @@ def _letture_bolletta(text: str, utility_type: str) -> list:
         if riga not in unici:
             unici.append(riga)
     unici.sort(key=lambda r: r["data"])
-    return unici
+    # Nei layout a blocchi (gas/luce fino al 2024) ogni blocco ripete come "lettura
+    # precedente" l'ultima del blocco prima: riga doppia, si toglie.
+    return [r for i, r in enumerate(unici)
+            if not (i and r["tipo"] == "precedente" and r["lettura"] == unici[i - 1]["lettura"])]
 
 
 def _lettura_fatturata(text: str, utility_type: str) -> dict:
@@ -606,11 +649,16 @@ def _lettura_fatturata(text: str, utility_type: str) -> dict:
     if not righe:
         return {}
     ultima = righe[-1]
-    return {
-        "lettura": ultima["lettura"],
+    out = {
         "data_lettura": ultima["data"],
         "tipo_lettura": "stimata" if ultima["tipo"] == "stimata" else "rilevata",
     }
+    if (utility_type or "").upper() == "LUCE":
+        out.update({"lettura_f1": ultima["f1"], "lettura_f2": ultima["f2"],
+                    "lettura_f3": ultima["f3"], "lettura_totale": ultima["lettura"]})
+    else:
+        out["lettura"] = ultima["lettura"]
+    return out
 
 
 def estrai_scheda_bolletta(text: str, utility_type: str) -> dict:
@@ -643,7 +691,7 @@ def estrai_scheda_bolletta(text: str, utility_type: str) -> dict:
         scheda["consumo"] = consumo
         m = re.search(r"Ricalcoli per conguaglio (-?\d+(?:\.\d{3})*,\d{2})", text)
         scheda["ricalcoli_euro"] = _num_it(m.group(1)) if m else None
-    elif ut == "GAS":
+    elif ut in ("GAS", "LUCE"):
         # "Periodo di riferimento: 01 LUGLIO 2026 - 31 AGOSTO 2026" (dal 2025) o
         # "PERIODO 01 GENNAIO 2024 - 29 FEBBRAIO 2024" (fino al 2024).
         m = re.search(r"(?:Periodo di riferimento:|PERIODO)\s*(\d{1,2}) ([A-Z]+) (\d{4}) - (\d{1,2}) ([A-Z]+) (\d{4})", text)
@@ -652,12 +700,13 @@ def estrai_scheda_bolletta(text: str, utility_type: str) -> dict:
                 "periodo_inizio": f"{m.group(3)}-{_MESI_IT.index(m.group(2)) + 1:02d}-{int(m.group(1)):02d}",
                 "periodo_fine": f"{m.group(6)}-{_MESI_IT.index(m.group(5)) + 1:02d}-{int(m.group(4)):02d}",
             }
+        unita = "Smc" if ut == "GAS" else "kWh"
         consumo = {"totale": None}
-        et = re.search(r"Consumo totale fatturato nel periodo|Consumo gas", text)
+        et = re.search(r"Consumo totale fatturato nel periodo|Consumo gas|Consumo energia elettrica", text)
         if et:
-            m = re.search(r"(\d{1,3}(?:\.\d{3})*(?:,\d+)?) Smc", text[et.end():et.end() + 200])
+            m = re.search(rf"(\d{{1,3}}(?:\.\d{{3}})*(?:,\d+)?) {unita}", text[et.end():et.end() + 200])
             consumo["totale"] = _num_it(m.group(1)) if m else None
-        m = re.search(r"di cui consumo stimato (\d{1,3}(?:\.\d{3})*(?:,\d+)?) Smc", text, re.IGNORECASE)
+        m = re.search(rf"di cui consumo stimato (\d{{1,3}}(?:\.\d{{3}})*(?:,\d+)?) {unita}", text, re.IGNORECASE)
         consumo["stimato"] = _num_it(m.group(1)) if m else sum(
             r["consumo"] or 0 for r in scheda["letture"] if r["tipo"] == "stimata")
         scheda["consumo"] = consumo
@@ -703,7 +752,7 @@ def estrai_campi_regex(text: str, utility_type: str) -> dict:
     non è stata trovata (mai zeri finti)."""
     out = {}
     ut = (utility_type or "").upper()
-    if ut in ("ACQUA", "GAS"):
+    if ut in ("ACQUA", "GAS", "LUCE"):
         out.update(_lettura_fatturata(text, ut))
     if ut == "ACQUA":
         out.update(_periodo_riferimento_acqua(text))

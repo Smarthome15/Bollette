@@ -29,7 +29,7 @@ Campi comuni a tutte le utenze:
 | `fattura` | Importo totale in € della bolletta. |
 | `pdf_path` | Percorso relativo del PDF archiviato (se presente). Accanto, stesso nome `.json`, la **scheda bolletta** (vedi sotto). |
 | `tipo_lettura` | Tipo della **lettura fatturata**: `rilevata` / `stimata` (`mista` nei record vecchi inseriti a mano). |
-| `data_lettura` | (Gas/acqua, dal 28/09/2026) data della **lettura fatturata**: l'ultima riga del quadro letture, reale o stimata. Con `lettura` dà il saldo in Verifica Anomalie. `null` se ignota. |
+| `data_lettura` | (Dal 28/09/2026) data della **lettura fatturata**: l'ultima riga del quadro letture, reale o stimata. Con la lettura (`lettura`, o `lettura_totale` per la luce) dà il saldo in Verifica Anomalie. `null` se ignota. |
 | `note` | Note libere. |
 | `quota_fissa` | (Opzionale) quota fissa del periodo in €. |
 | `quota_energia` | (Opzionale) spesa per la materia/energia consumata in €. |
@@ -38,12 +38,12 @@ Campi comuni a tutte le utenze:
 | `canone_rai` | (Opzionale, solo LUCE, dal 30/08/2026) rata del canone TV addebitata in questa bolletta (fuori campo IVA, di norma 9 €/mese gen–ott). `null` = non addebitata. È una tassa già compresa in `fattura`, non un costo dell'energia. |
 
 Campi specifici:
-- **LUCE**: `lettura_f1`, `lettura_f2`, `lettura_f3` (fasce) + `lettura_totale`.
+- **LUCE**: `lettura_f1`, `lettura_f2`, `lettura_f3` (fasce) + `lettura_totale` = letture **fatturate** (ultima riga del quadro letture), come per gas/acqua qui sotto; recuperate dai PDF il 28/09/2026.
 - **GAS / ACQUA**: `lettura` = posizione del contatore **fatturata** dalla bolletta (ultima riga del quadro letture, reale o stimata): la bolletta successiva riparte da lì, quindi `lettura − lettura della bolletta precedente` = **consumo netto fatturato** (`nettoFatturato` in `app.js`), e `lettura − tua autolettura alla data_lettura` = **saldo**. Recuperate dai PDF su tutto lo storico il 28/09/2026 (prima i record storici avevano le autoletture; backup `backup_nas/fix_letture_fatturate_*`).
 
 ### Scheda bolletta (JSON accanto al PDF, dal 28/09/2026)
 
-`database/pdfs/<nome>.json`, scritta da `_salva_scheda_bolletta` (`server.py`) a ogni `upload-pdf` e recuperata per tutto lo storico: `{versione, creata_il, pdf, utenza, scheda, testo}`. `testo` è il testo completo estratto dal PDF; `scheda` i dati strutturati letti in modo deterministico (`estrai_scheda_bolletta`): `letture` (ogni riga del quadro letture: data, lettura, consumo, tipo), `periodo`, `consumo` (lordo `totale`, `dal`/`al`, `stimato`, `acconti_restituiti` per l'acqua), `tipo_fattura` e `ricalcoli_euro` (acqua). Serve a lavorare su dati già estratti invece di rileggere il PDF; il frontend non la carica (le analisi usano i campi del record).
+`database/pdfs/<nome>.json`, scritta da `_salva_scheda_bolletta` (`server.py`) a ogni `upload-pdf` e recuperata per tutto lo storico: `{versione, creata_il, pdf, utenza, scheda, testo}`. `testo` è il testo completo estratto dal PDF; `scheda` i dati strutturati letti in modo deterministico (`estrai_scheda_bolletta`): `letture` (ogni riga del quadro letture: data, lettura, consumo, tipo; per la luce anche `f1`/`f2`/`f3`, con `lettura` = totale), `periodo`, `consumo` (lordo `totale`, `dal`/`al`, `stimato`, `acconti_restituiti` per l'acqua), `tipo_fattura` e `ricalcoli_euro` (acqua). Rifiuti: solo testo. Serve a lavorare su dati già estratti invece di rileggere il PDF; il frontend la mostra nel dettaglio bolletta ("Dati estratti dalla bolletta"), mentre le analisi usano i campi del record.
 
 **Tipi di fattura acqua (Iren)**: *Acconto* = solo consumi stimati; *Conguaglio e Acconto* = rifattura dall'ultima lettura reale, restituisce gli acconti precedenti in m³ ("Restituzione acconti mc N") e aggiunge una nuova stima fino a fine periodo; *Conguaglio/Rettifica* = come sopra ma le bollette precedenti vengono corrette in **euro** ("Ricalcoli per conguaglio", es. nuove tariffe annuali retroattive dal 1° gennaio: 2024 e 2026), e può chiudere su una lettura reale senza acconto — da cui un periodo come "GIUGNO - SETTEMBRE 2026" = 01/06 → 03/09.
 
@@ -73,7 +73,7 @@ Le bollette importate dal vecchio Excel non avevano `periodo_inizio`/`periodo_fi
 - **periodo**: fine = data bolletta; inizio = giorno dopo la fine della bolletta precedente (per la prima bolletta: dalla prima autolettura disponibile);
 - **`consumo_fatturato`**: per il gas dal dato reale ("MtC fatturati" dell'Excel); per luce/acqua = consumo rilevato dalle letture del periodo.
 
-Questo ha reso utilizzabile la pagina Verifica Anomalie sullo storico. Il 28/09/2026 gas e acqua sono stati ripresi dai PDF (lettura fatturata, `data_lettura`, `tipo_lettura`, consumo stampato; periodo corretto solo su acqua 18/09/2025 e gas 31/12/2023); la luce è rimasta com'era.
+Questo ha reso utilizzabile la pagina Verifica Anomalie sullo storico. Il 28/09/2026 gas, acqua e luce sono stati ripresi dai PDF (lettura fatturata, `data_lettura`, `tipo_lettura`, consumo stampato; periodo corretto solo su acqua 18/09/2025 e gas 31/12/2023). Luce: `periodo_*` e `prezzo_unitario_energia` NON toccati (li legge il ponte "conti del solare" di Jarvis).
 
 ## Vincoli pratici
 

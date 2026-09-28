@@ -2300,8 +2300,125 @@ async function openPdfModal(url, title, bill) {
             <p style="background:rgba(255,255,255,0.03); padding:10px; border-radius:var(--radius-sm); font-size:0.85rem; border:1px solid var(--border-glass);">${bill.note || "Nessuna nota aggiuntiva."}</p>
         </div>
     `;
-    
+
     document.getElementById("modal-dettaglio-bolletta").classList.remove("hidden");
+    caricaSchedaBolletta(bill);
+}
+
+// --- DATI ESTRATTI DALLA BOLLETTA (scheda JSON accanto al PDF) ---
+// Il backend salva accanto a ogni PDF la sua «scheda» (`<nome>.json`: testo +
+// dati strutturati letti dal PDF, _salva_scheda_bolletta in server.py). Nel
+// dettaglio bolletta la mostriamo sotto PDF e dati: quadro letture, consumi,
+// una spiegazione in parole semplici e il testo completo. Stessa chiave dei PDF.
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function caricaSchedaBolletta(bill) {
+    const box = document.getElementById("modal-scheda-content");
+    if (!box) return;
+    const turno = state.schedaTurno = (state.schedaTurno || 0) + 1; // una sola scheda: l'ultima aperta
+    box.innerHTML = "";
+    if (!bill || !bill.pdf_path) return;
+    box.innerHTML = `<h4 class="section-divider">Dati estratti dalla bolletta</h4><p class="help-text">Caricamento…</p>`;
+    try {
+        const res = await fetch(`${state.apiBaseUrl}/${bill.pdf_path.replace(/\.pdf$/i, ".json")}`, { headers: apiHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const dati = await res.json();
+        if (turno === state.schedaTurno) box.innerHTML = htmlSchedaBolletta(bill, dati);
+    } catch (err) {
+        console.warn("Scheda bolletta non disponibile:", err);
+        if (turno === state.schedaTurno) {
+            box.innerHTML = `<h4 class="section-divider">Dati estratti dalla bolletta</h4><p class="help-text">Scheda non disponibile per questa bolletta (viene creata quando il PDF viene archiviato).</p>`;
+        }
+    }
+}
+
+function htmlSchedaBolletta(bill, dati) {
+    const s = dati.scheda || {};
+    const unit = unitForUtility(bill.utility);
+    const luce = bill.utility === "LUCE";
+    const letture = Array.isArray(s.letture) ? s.letture : [];
+    const c = s.consumo || {};
+    const euro = x => `${x.toFixed(2).replace(".", ",")} €`;
+    const badgeTipo = t => {
+        const cls = t === "stimata" ? "badge-warning" : (t === "rilevata" || t === "autolettura") ? "badge-success" : "badge-secondary";
+        return `<span class="badge ${cls}">${t === "precedente" ? "di partenza" : escapeHtml(t)}</span>`;
+    };
+
+    const righe = letture.map(r => `<tr>
+            <td>${formatDate(r.data)}</td>
+            ${luce ? `<td>${r.f1}</td><td>${r.f2}</td><td>${r.f3}</td>` : ""}
+            <td class="font-medium">${r.lettura}</td>
+            <td>${r.consumo != null ? r.consumo : "—"}</td>
+            <td>${badgeTipo(r.tipo)}</td>
+        </tr>`).join("");
+    const tabella = letture.length ? `
+        <div class="table-responsive"><table class="data-table">
+            <thead><tr><th>Data</th>${luce ? "<th>F1</th><th>F2</th><th>F3</th><th>Totale</th>" : "<th>Lettura</th>"}<th>Consumo (${unit})</th><th>Tipo</th></tr></thead>
+            <tbody>${righe}</tbody>
+        </table></div>`
+        : `<p class="help-text">Quadro letture non riconosciuto in questa bolletta.</p>`;
+
+    const riga = (etichetta, valore) => `<div class="details-row"><span class="details-label">${etichetta}</span><span class="details-val">${valore}</span></div>`;
+    const periodo = s.periodo || {};
+    const dettagli = [
+        s.tipo_fattura ? riga("Tipo di fattura", escapeHtml(s.tipo_fattura)) : "",
+        (periodo.periodo_inizio || periodo.periodo_fine) ? riga("Periodo", `${formatDate(periodo.periodo_inizio)} → ${formatDate(periodo.periodo_fine)}`) : "",
+        c.totale != null ? riga("Consumo stampato in bolletta", `${c.totale} ${unit}${c.dal ? ` (dal ${formatDate(c.dal)} al ${formatDate(c.al)})` : ""}`) : "",
+        c.stimato ? riga("di cui stimato", `${c.stimato} ${unit}`) : "",
+        c.acconti_restituiti ? riga("Acconti restituiti", `${c.acconti_restituiti} ${unit}`) : "",
+        s.ricalcoli_euro != null ? riga("Ricalcoli in euro", euro(s.ricalcoli_euro)) : ""
+    ].join("");
+
+    const testo = dati.testo ? `
+        <details class="mt-3"><summary>Testo completo estratto dal PDF</summary>
+            <pre class="scheda-testo">${escapeHtml(dati.testo)}</pre>
+        </details>` : "";
+
+    return `
+        <h4 class="section-divider">Dati estratti dalla bolletta</h4>
+        <p class="help-text">Letti direttamente dal PDF${dati.creata_il ? ` (scheda del ${formatDate(String(dati.creata_il).slice(0, 10))})` : ""}.</p>
+        <div class="scheda-spiegazione">${spiegaSchedaBolletta(s, unit)}</div>
+        <h5 class="mt-3">Quadro letture</h5>
+        ${tabella}
+        ${dettagli ? `<div class="details-list mt-3">${dettagli}</div>` : ""}
+        ${testo}
+    `;
+}
+
+// Come leggere la bolletta, in parole semplici, dai dati della scheda.
+function spiegaSchedaBolletta(s, unit) {
+    const tutte = Array.isArray(s.letture) ? s.letture : [];
+    const reali = tutte.filter(r => r.tipo !== "precedente");
+    const ultima = reali[reali.length - 1];
+    const partenza = tutte[0];
+    const c = s.consumo || {};
+    const tipo = (s.tipo_fattura || "").toLowerCase();
+    const dal = formatDate(c.dal || (partenza && partenza.data));
+    const frasi = [];
+
+    if (tipo === "acconto") {
+        frasi.push(`<strong>Fattura di acconto</strong>: nessuna lettura reale nuova, i ${c.totale != null ? c.totale : "?"} ${unit} sono tutti stimati e verranno ricalcolati con la prossima lettura reale.`);
+    } else if (tipo.startsWith("conguaglio e acconto")) {
+        frasi.push(`<strong>Fattura di conguaglio e acconto</strong>: rifattura dal ${dal} con le letture reali` +
+            (c.acconti_restituiti ? `, ti restituisce ${c.acconti_restituiti} ${unit} di acconti già pagati` : "") +
+            ` e stima ${c.stimato || 0} ${unit} fino al ${formatDate(ultima && ultima.data)}. Il consumo stampato (${c.totale} ${unit}) è quindi lordo.`);
+    } else if (tipo.startsWith("conguaglio/rettifica")) {
+        frasi.push(`<strong>Fattura di conguaglio e rettifica</strong>: rifattura dal ${dal} al ${formatDate(ultima && ultima.data)}` +
+            (c.stimato ? ` (di cui ${c.stimato} ${unit} stimati),` : " tutto su letture reali, senza nuove stime,") +
+            ` e corregge in euro le bollette precedenti` +
+            (s.ricalcoli_euro != null ? ` (${s.ricalcoli_euro.toFixed(2).replace(".", ",")} €: acconti restituiti e ricalcoli, es. nuove tariffe annuali)` : "") + ".");
+    } else if (c.totale != null) {
+        frasi.push(`Consumo fatturato nel periodo: <strong>${c.totale} ${unit}</strong>` +
+            (c.stimato ? `, di cui <strong>${c.stimato} ${unit} stimati</strong>` : ", tutto su letture reali") + ".");
+    }
+    if (ultima) {
+        frasi.push(ultima.tipo === "stimata"
+            ? `L'ultima lettura (${formatDate(ultima.data)}: ${ultima.lettura}) è <strong>stimata</strong>: la prossima bolletta la correggerà con una lettura reale; comunicare l'autolettura accelera il ricalcolo.`
+            : `L'ultima lettura (${formatDate(ultima.data)}: ${ultima.lettura}) è <strong>reale</strong>: fino a quel giorno il consumo è misurato, non stimato.`);
+    }
+    return frasi.join(" ") || "Nessun dato strutturato riconosciuto: sotto trovi il testo completo della bolletta.";
 }
 
 // RENDER TABELLA LETTURE MANUALI
@@ -2649,7 +2766,9 @@ function voceAuditSaldo(s, unit) {
         composizione += ". ";
     }
 
-    const tolleranza = Math.max(1, SOGLIA_AUDIT * (s.reale || 0));
+    // Tolleranza: 5% del consumo del periodo (per la prima bolletta della serie,
+    // senza consumo rilevato, quello stampato), almeno 1 unità.
+    const tolleranza = Math.max(1, SOGLIA_AUDIT * (s.reale != null ? s.reale : (s.lordo || 0)));
     if (Math.abs(s.saldo) <= tolleranza) {
         v.statusBadge = `<span class="badge badge-success">Allineata</span>`;
         v.actionText = composizione + `In pari: al ${dataTxt} hai pagato quanto consumato.`;
@@ -3622,16 +3741,26 @@ function autoletturaAllaData(sortedReadings, giorno) {
     return (t - ultimo.t) / 86400000 <= GIORNI_TOLLERANZA_LETTURA ? ultimo.v : null;
 }
 
-// Consumo NETTO fatturato da una bolletta gas/acqua: la sua lettura fatturata meno
-// quella della bolletta precedente (per data_lettura). null se non calcolabile
-// (record senza data_lettura, o prima bolletta della serie).
+// Valore della lettura fatturata di una bolletta: il totale F1+F2+F3 per la
+// luce, la lettura unica per gas/acqua. null se assente.
+function valoreLetturaFatturata(b) {
+    if (!b) return null;
+    if (typeof b.lettura_totale === "number" && isFinite(b.lettura_totale)) return b.lettura_totale;
+    if (typeof b.lettura === "number" && isFinite(b.lettura)) return b.lettura;
+    return null;
+}
+
+// Consumo NETTO fatturato da una bolletta: la sua lettura fatturata meno quella
+// della bolletta precedente (per data_lettura). null se non calcolabile (record
+// senza data_lettura, o prima bolletta della serie).
 function nettoFatturato(bill, billsUtenza) {
-    if (!bill || !bill.data_lettura || typeof bill.lettura !== "number" || !isFinite(bill.lettura)) return null;
+    const valore = valoreLetturaFatturata(bill);
+    if (!bill || !bill.data_lettura || valore == null) return null;
     const prec = (billsUtenza || [])
         .filter(b => b !== bill && b.data_lettura && b.data_lettura < bill.data_lettura
-            && typeof b.lettura === "number" && isFinite(b.lettura))
+            && valoreLetturaFatturata(b) != null)
         .sort((a, b) => b.data_lettura.localeCompare(a.data_lettura))[0];
-    return prec ? bill.lettura - prec.lettura : null;
+    return prec ? valore - valoreLetturaFatturata(prec) : null;
 }
 
 // Saldo per le bollette con lettura fatturata datata. Ritorna una Map
@@ -3641,23 +3770,24 @@ function auditSaldoBollette(bills, sortedReadings) {
     const esiti = new Map();
     const arrotonda = x => Math.round(x * 10) / 10;
     const datate = (bills || [])
-        .filter(b => b.data_lettura && typeof b.lettura === "number" && isFinite(b.lettura))
+        .filter(b => b.data_lettura && valoreLetturaFatturata(b) != null)
         .sort((a, b) => a.data_lettura.localeCompare(b.data_lettura));
     let prec = null;
     datate.forEach(b => {
+        const fatturata = valoreLetturaFatturata(b);
         const tua = autoletturaAllaData(sortedReadings, b.data_lettura);
         const esito = {
             verifiable: tua != null,
             reason: tua == null ? `Manca una tua autolettura vicino al ${formatDate(b.data_lettura)} (data della lettura in bolletta).` : null,
             dataLettura: b.data_lettura,
             tipo: b.tipo_lettura || null,
-            letturaFatturata: b.lettura,
+            letturaFatturata: fatturata,
             tua: tua,
-            netto: prec ? b.lettura - prec.lettura : null,
+            netto: prec ? fatturata - prec.lettura : null,
             lordo: (typeof b.consumo_fatturato === "number" && isFinite(b.consumo_fatturato)) ? b.consumo_fatturato : null,
             reale: null,
             differenza: null,
-            saldo: tua != null ? arrotonda(b.lettura - tua) : null,
+            saldo: tua != null ? arrotonda(fatturata - tua) : null,
             saldoPrecedente: prec ? prec.saldo : null
         };
         if (tua != null && prec && prec.tua != null) {
@@ -3665,7 +3795,7 @@ function auditSaldoBollette(bills, sortedReadings) {
             esito.differenza = arrotonda(esito.netto - esito.reale);
         }
         esiti.set(b, esito);
-        prec = { lettura: b.lettura, tua: tua, saldo: esito.saldo };
+        prec = { lettura: fatturata, tua: tua, saldo: esito.saldo };
     });
     return esiti;
 }

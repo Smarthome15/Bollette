@@ -1051,6 +1051,44 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
     text-align: right;
 }
 
+/* Dati estratti dalla bolletta (scheda JSON), sotto PDF e dettagli nel modal */
+.modal-scheda {
+    margin-top: 20px;
+    min-width: 0;
+}
+
+.modal-scheda:empty {
+    display: none;
+}
+
+.scheda-spiegazione {
+    padding: 12px 14px;
+    border-radius: var(--radius-md);
+    background: rgba(59, 130, 246, 0.10);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    line-height: 1.55;
+    font-size: 0.9rem;
+}
+
+.modal-scheda summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.scheda-testo {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 420px;
+    overflow-y: auto;
+    font-size: 0.75rem;
+    padding: 10px;
+    margin-top: 8px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-glass);
+    background: rgba(255, 255, 255, 0.03);
+}
+
 /* --- IMPOSTAZIONI BACKUP BOX --- */
 .backup-action-box {
     border: 1px solid var(--border-glass);
