@@ -1,0 +1,4 @@
+# I file di terzi in static/vendor/ (copiati dal kit grafico di Jarvis) restano
+# byte per byte: con autocrlf git cambierebbe i fine riga e gli SHA-256 annotati
+# in docs/architettura.md non tornerebbero.
+static/vendor/** -text

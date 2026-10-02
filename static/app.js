@@ -2128,21 +2128,22 @@ function renderBillsTable() {
 // non hanno un viewer PDF integrato e trasformano il frame in un download
 // bloccato ("contenuto bloccato"). PDF.js disegna le pagine su canvas, quindi
 // funziona ovunque. Tecnica ripresa da F.A.M.ilia (apriAnteprima/renderPdfInModal).
-// PDF.js è caricato dal CDN solo alla prima apertura di un PDF (lazy).
+// PDF.js (3.11.174) è un file locale in vendor/, caricato solo alla prima
+// apertura di un PDF (lazy). Percorsi relativi: la pagina vive sia su :8000 sia
+// sotto /local/Bollette/static/.
 let pdfJsPromise = null;
 function caricaPdfJs() {
     if (window.pdfjsLib) return Promise.resolve();
     if (pdfJsPromise) return pdfJsPromise;
     pdfJsPromise = new Promise((resolve, reject) => {
         const s = document.createElement("script");
-        s.src = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
+        s.src = "vendor/pdf.min.js";
         s.onload = () => {
-            // Worker cross-origin non consentito: PDF.js ricade da solo sul "fake
-            // worker" nel main thread. Basta indicare comunque il sorgente.
-            pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+            // Stessa origine della pagina: PDF.js può usare un worker vero.
+            pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js";
             resolve();
         };
-        s.onerror = () => { pdfJsPromise = null; reject(new Error("CDN PDF.js non raggiungibile")); };
+        s.onerror = () => { pdfJsPromise = null; reject(new Error("PDF.js non caricato (vendor/pdf.min.js)")); };
         document.head.appendChild(s);
     });
     return pdfJsPromise;

@@ -50,7 +50,7 @@ Non esiste una suite di test né linter configurati. Per verificare una modifica
 Due metà che comunicano solo via API REST JSON — **nessun framework frontend, nessun build step**: il frontend è HTML/CSS/JS statico servito da Starlette.
 
 - **Backend** — `server.py`: app Starlette (ASGI) servita da uvicorn. Espone gli endpoint `/api/*` (incluso `GET /api/health` per il watchdog), monta i PDF archiviati su `/database/pdfs`, e monta `static/` come root del sito. **Chiave di accesso (bonifica accessi 26/07/2026)**: il middleware `ChiaveAccessoMiddleware` esige l'header **`X-Bollette-Key`** su tutte le rotte API e sui PDF — uniche eccezioni `/api/health` (che per questo è **muto**: risponde solo `{"ok": true}`) e il frontend statico. 401 se manca/errata (confronto in tempo costante, mai la chiave nei log), **fail-closed 503** se il server non ha chiave configurata. La chiave (`CHIAVE_ACCESSO` in `config.py`) arriva da env `BOLLETTE_ACCESS_KEY` (options add-on) o da `secrets_local.py`; lato client vive in `localStorage` (campo in Impostazioni) e viaggia via `apiHeaders()` in `app.js` — i PDF si aprono via fetch (mai con la chiave nell'URL) e si mostrano con **PDF.js su canvas** (`mostraPdf`/`renderPaginePdf` in `app.js`, dal 30/08/2026, tecnica di F.A.M.ilia): niente `<iframe>`, perché Chrome Android e la WebView dell'app companion non hanno un viewer PDF e bloccavano il frame; pulsante Scarica = blob URL su clic diretto. CORS è aperto a `*` apposta per permettere a Home Assistant (porta 8123) di chiamare le API. `config.py` definisce utenti/ruoli, percorsi e i percorsi app locale/remota; **la chiave Gemini NON è in `config.py`** (vedi sotto "Chiave Gemini"). Con **`BOLLETTE_ADDON=1`** nell'ambiente (`MODALITA_ADDON` in `config.py`, usato dall'add-on HA in `addon/`) il backend spegne sync/mirroring NAS e pubblicazione: sta già girando sul NAS.
-- **Frontend** — `static/index.html` (markup + tab), `static/app.js` (tutta la logica, single-file, basata su un oggetto globale `state`), `static/app.css`. Chart.js e Lucide arrivano da CDN.
+- **Frontend** — `static/index.html` (markup + tab), `static/app.js` (tutta la logica, single-file, basata su un oggetto globale `state`), `static/app.css`. **Niente caricato da internet (dal 02/10/2026)**: Chart.js, Lucide, PDF.js e i caratteri Inter/Outfit sono file locali a versione fissata in `static/vendor/`, copiati dal kit grafico di Jarvis (`C:\Dev\Jarvis\collab\kit-grafico\`) — non si modificano e non si aggiornano a mano: versioni e SHA-256 in [docs/architettura.md](docs/architettura.md).
 
 ### Modello dati (la cosa più importante da capire)
 
@@ -130,6 +130,14 @@ Fatto e in produzione (committato su `main`, pubblicato sul NAS): scheda Audit f
 ### Già su GitHub `main` (pushato)
 
 Dashboard filtro Anno + fix trend/consumi; import backup sicuro; guardie Letture (commit `5b6f1d1`). Nuova tab **Andamento Prezzi** + estrazione `quota_fissa`/`quota_energia`/`prezzo_unitario_energia` da Gemini, e documentazione `docs/` (commit `f301de2`). **Dati UserA sul NAS** già aggiornati: correzione luce F1 31/12/2024 (333→339, tot 1086); periodi/`consumo_fatturato` popolati su tutte le bollette storiche. Backup in `backup_nas/` (`fix_luce_F1_…`, `fix_audit_periodi_…`).
+
+### Lavori del 02/10/2026 — librerie e caratteri in locale (niente CDN)
+
+Origine: voce di Jarvis in bacheca (02/10/2026). La pagina caricava Chart.js e Lucide da CDN **senza versione** e i caratteri da Google Fonts: codice di terzi che girava nella pagina con la chiave K, e con internet giù sparivano icone, grafici e caratteri. Bollette ha segnalato anche il terzo caricamento, PDF.js. Fatto in un giro solo:
+- **`static/vendor/`**: copia del `vendor/` del kit grafico v1.1.0 (Chart.js 4.5.1, Lucide 1.50.0, PDF.js 3.11.174, Inter e Outfit `woff2`). `.gitattributes` (`static/vendor/** -text`) li tiene byte per byte: con `autocrlf` git cambierebbe i fine riga e gli SHA non tornerebbero.
+- `index.html` punta a `vendor/…`, i caratteri sono `@font-face` in testa ad `app.css`, `caricaPdfJs` carica `vendor/pdf.min.js` (ora con worker vero: stessa origine). Percorsi sempre **relativi** (la pagina vive su `:8000` e sotto `/local/Bollette/static/`).
+- Provato in Edge headless a 1400 e 400 px registrando ogni richiesta di rete: nessuna fuori dall'host dell'app.
+- **Convergenza sul kit** (`kit.css` + un nostro CSS coi colori delle utenze): rimandata a quando si mette mano alla UI.
 
 ### Lavori del 28/09/2026 — PDF da telefono, lettura fatturata, saldo, scheda bolletta
 

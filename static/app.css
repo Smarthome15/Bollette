@@ -1,5 +1,23 @@
 /* app.css */
 
+/* --- CARATTERI (file locali in vendor/, niente Google Fonts) ---
+   Outfit per i titoli, Inter per il testo: woff2 variabili (pesi 100–900). */
+@font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url('vendor/caratteri/inter-latin-wght-normal.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'Outfit';
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url('vendor/caratteri/outfit-latin-wght-normal.woff2') format('woff2');
+}
+
 /* --- VARIABILI DESIGN SYSTEM (Premium Dark Theme) --- */
 :root {
     --bg-base: #0b0f19;
