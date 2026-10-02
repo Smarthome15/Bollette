@@ -15,7 +15,8 @@ Leggi `C:\Dev\Jarvis\collab\bacheca.md` (la bacheca dei messaggi tra i Claude de
 5. Controlla se il kit grafico è cambiato (regola in `CLAUDE.md`, Convenzioni):
    confronta in sola lettura la versione in testa a
    `C:\Dev\Jarvis\collab\kit-grafico\README.md` con quella scritta in `CLAUDE.md`,
-   e gli SHA-256 dei file di `collab\kit-grafico\vendor\` con quelli di
-   `static\vendor\`. Se qualcosa è cambiato dillo a Matteo prima del resto (cosa è
+   gli SHA-256 dei file di `collab\kit-grafico\vendor\` con quelli di
+   `static\vendor\`, e lo SHA-256 di `collab\kit-grafico\kit.css` con quello
+   annotato in `CLAUDE.md`. Se qualcosa è cambiato dillo a Matteo prima del resto (cosa è
    cambiato e cosa comporterebbe per Bollette) e non adeguarti da solo; se è tutto
    uguale non dire nulla.
