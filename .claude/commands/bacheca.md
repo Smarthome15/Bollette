@@ -12,3 +12,10 @@ Leggi `C:\Dev\Jarvis\collab\bacheca.md` (la bacheca dei messaggi tra i Claude de
    (`[data] Bollette → Jarvis — titolo — STATO: APERTA`).
 4. Chiudi (STATO: CHIUSA) le voci di Bollette ormai superate e spostale in
    `C:\Dev\Jarvis\collab\archivio.md`.
+5. Controlla se il kit grafico è cambiato (regola in `CLAUDE.md`, Convenzioni):
+   confronta in sola lettura la versione in testa a
+   `C:\Dev\Jarvis\collab\kit-grafico\README.md` con quella scritta in `CLAUDE.md`,
+   e gli SHA-256 dei file di `collab\kit-grafico\vendor\` con quelli di
+   `static\vendor\`. Se qualcosa è cambiato dillo a Matteo prima del resto (cosa è
+   cambiato e cosa comporterebbe per Bollette) e non adeguarti da solo; se è tutto
+   uguale non dire nulla.
