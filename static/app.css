@@ -322,6 +322,12 @@ body {
     margin-bottom: 16px;
 }
 
+/* Promemoria "dati da inserire" (Dashboard): quando compare, respira rispetto
+   alle schede KPI sottostanti. Da nascosto (display:none) il margine non conta. */
+#dati-mancanti-box {
+    margin-bottom: 24px;
+}
+
 /* --- SCHEDE KPI (DASHBOARD) --- */
 .kpi-grid {
     display: grid;
